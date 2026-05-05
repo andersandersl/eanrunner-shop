@@ -1,6 +1,7 @@
 import type { CategoriesResponse, ProductDetailResponse, ProductFullDetail, ProductListResponse } from './types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+const API_BASE = /^https?:\/\//i.test(RAW_API_BASE) ? RAW_API_BASE : `https://${RAW_API_BASE}`;
 
 async function readJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
