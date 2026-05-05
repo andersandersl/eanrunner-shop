@@ -9,6 +9,7 @@ dotenv.config();
 
 const PORT = Number(process.env.PORT || 8787);
 const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:5173';
+const WEB_ORIGINS = WEB_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const REQUEST_FROM_EMAIL = process.env.REQUEST_FROM_EMAIL || 'EANrunner <notifications@eanrunner.com>';
@@ -173,7 +174,13 @@ async function getPool(): Promise<sql.ConnectionPool> {
 async function main(): Promise<void> {
   const app = express();
 
-  app.use(cors({ origin: WEB_ORIGIN }));
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (WEB_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+  }));
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => {
