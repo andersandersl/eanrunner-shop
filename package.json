@@ -1,0 +1,11 @@
+{
+  "name": "webversion",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "npm --prefix web run dev",
+    "dev:api": "npm --prefix api run dev",
+    "build:web": "npm --prefix web run build",
+    "build:api": "npm --prefix api run build"
+  }
+}

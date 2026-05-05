@@ -1,0 +1,211 @@
+.app-shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.hero {
+  background: linear-gradient(120deg, #13353f 0%, #2b5966 55%, #3a6f7a 100%);
+  color: #f4fbfd;
+  border-radius: 16px;
+  padding: 1.4rem;
+  margin-bottom: 1rem;
+}
+
+.hero h1 {
+  margin: 0.2rem 0 0.5rem;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  opacity: 0.92;
+  margin: 0;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 70ch;
+  opacity: 0.92;
+}
+
+.search-panel {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.search-panel input {
+  flex: 1;
+  border: 1px solid #bfd4db;
+  border-radius: 10px;
+  background: #f6fbfd;
+  padding: 0.7rem 0.8rem;
+}
+
+.count {
+  color: #4f6870;
+  font-size: 0.9rem;
+}
+
+.status {
+  margin: 0.5rem 0;
+  color: #2d3a40;
+}
+
+.status.ok {
+  color: #0f6f50;
+}
+
+.status.error {
+  color: #a11f42;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 0.85rem;
+}
+
+.card {
+  border: 1px solid #d7e5e9;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.9rem;
+}
+
+.card-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meta {
+  color: #5e7178;
+  margin: 0.2rem 0 0;
+  font-size: 0.9rem;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0.8rem 0;
+  gap: 0.4rem;
+}
+
+.facts dt {
+  font-size: 0.75rem;
+  color: #6a7b81;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  margin: 0.2rem 0 0;
+}
+
+.card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-actions a,
+.card-actions button {
+  border-radius: 8px;
+  font-size: 0.86rem;
+  padding: 0.45rem 0.6rem;
+}
+
+.card-actions a {
+  color: #1a5869;
+  text-decoration: none;
+  border: 1px solid #a9ccd8;
+}
+
+.card-actions button,
+.request-panel button {
+  border: 1px solid #25606f;
+  background: #25606f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.request-panel {
+  margin-top: 1rem;
+  border: 1px solid #d7e5e9;
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: #f8fcfd;
+}
+
+.request-panel h3 {
+  margin: 0;
+}
+
+.request-panel p {
+  margin: 0.35rem 0 0.8rem;
+}
+
+.request-panel form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.request-panel select,
+.request-panel input {
+  flex: 1;
+  min-width: 180px;
+  border: 1px solid #bfd4db;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0.65rem 0.7rem;
+}
+
+.muted {
+  color: #6b7f86;
+  font-size: 0.85rem;
+}
+
+.grade {
+  border-radius: 999px;
+  width: 2rem;
+  height: 2rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.grade-a { background: #0f7657; }
+.grade-b { background: #2f9250; }
+.grade-c { background: #b17808; }
+.grade-d { background: #c85a0a; }
+.grade-e { background: #be2d4c; }
+.grade-f { background: #8c2039; }
+.grade-n-a { background: #6e7f85; }
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 1rem 0.7rem 2rem;
+  }
+
+  .card-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .card-actions a,
+  .card-actions button {
+    text-align: center;
+  }
+}

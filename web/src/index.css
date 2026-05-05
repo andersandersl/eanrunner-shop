@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/* EANrunner Design System — matches app.eanrunner.com
+   Cobalt blue primary, cool off-white background */
+
+@theme {
+  --color-background: hsl(220 18% 97%);
+  --color-foreground: hsl(222 47% 8%);
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(222 47% 8%);
+  --color-primary: hsl(221 92% 55%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-secondary: hsl(220 14% 94%);
+  --color-muted: hsl(220 14% 93%);
+  --color-muted-foreground: hsl(220 12% 40%);
+  --color-border: hsl(220 14% 89%);
+  --color-destructive: hsl(0 84% 60%);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: hsl(220 18% 97%);
+  color: hsl(222 47% 8%);
+  font-family: "Inter", "Segoe UI", "Roboto", -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@media (min-width: 768px) {
+  body {
+    padding-left: 3.75rem;
+  }
+}
+
