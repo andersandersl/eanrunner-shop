@@ -37,6 +37,7 @@ type PublicProduct = {
   image: string | null;
   stockStatus: 'in stock' | 'not in stock';
   marginGrade: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'N/A';
+  competitorCount: number;
   marketPrice: number | null;
   marketCurrency: string | null;
   cheapestMarketLink: string | null;
@@ -58,6 +59,7 @@ type ProductRow = {
   enriched_at: Date | null;
   cheapest_supplier_price_eur: number | null;
   total_stock: number | null;
+  competitor_count: number | null;
   market_price_local: number | null;
   market_currency: string | null;
   market_price_eur: number | null;
@@ -221,6 +223,7 @@ async function main(): Promise<void> {
           ap.ean, ap.title, ap.brand, ap.category, ap.main_image, ap.enriched_at,
           MIN(csp.price_eur) AS cheapest_supplier_price_eur,
           SUM(ISNULL(csp.stock_quantity, 0)) AS total_stock,
+          COALESCE(emp.offer_count, 0) AS competitor_count,
           emp.lowest_price AS market_price_local,
           emp.currency AS market_currency,
           CASE WHEN emp.currency = 'EUR' THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) ELSE emp.lowest_price_eur END AS market_price_eur,
@@ -297,7 +300,7 @@ async function main(): Promise<void> {
           ${dataCte}
           SELECT * FROM with_grades
           ${gradeWhereClause}
-          ORDER BY CASE WHEN margin_grade = 'N/A' THEN 1 ELSE 0 END, enriched_at DESC
+          ORDER BY competitor_count DESC, CASE WHEN margin_grade = 'N/A' THEN 1 ELSE 0 END, enriched_at DESC
           OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
         `);
       } else {
@@ -313,16 +316,20 @@ async function main(): Promise<void> {
 
         result = await request.query(`
           WITH top_products AS (
-            SELECT ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at
+            SELECT
+              ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at,
+              COALESCE(emp.offer_count, 0) AS competitor_count
             FROM enriched.product ep
+            LEFT JOIN enriched.market_price emp ON emp.ean = ep.ean AND emp.country = @market
             ${whereClause}
-            ORDER BY ep.enriched_at DESC
+            ORDER BY COALESCE(emp.offer_count, 0) DESC, ep.enriched_at DESC
             OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
           )
           SELECT
             tp.ean, tp.title, tp.brand, tp.category, tp.main_image, tp.enriched_at,
             MIN(csp.price_eur) AS cheapest_supplier_price_eur,
             SUM(ISNULL(csp.stock_quantity, 0)) AS total_stock,
+            tp.competitor_count,
             emp.lowest_price AS market_price_local,
             emp.currency AS market_currency,
             CASE WHEN emp.currency = 'EUR' THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) ELSE emp.lowest_price_eur END AS market_price_eur,
@@ -331,8 +338,8 @@ async function main(): Promise<void> {
           LEFT JOIN consolidated.supplier_product csp ON csp.ean = tp.ean AND csp.stock_quantity > 0
           LEFT JOIN enriched.market_price emp ON emp.ean = tp.ean AND emp.country = @market
           GROUP BY tp.ean, tp.title, tp.brand, tp.category, tp.main_image, tp.enriched_at,
-                   emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
-          ORDER BY tp.enriched_at DESC
+                   tp.competitor_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
+          ORDER BY competitor_count DESC, tp.enriched_at DESC
         `);
       }
 
@@ -344,6 +351,7 @@ async function main(): Promise<void> {
         image: row.main_image || null,
         stockStatus: (row.total_stock ?? 0) > 0 ? 'in stock' : 'not in stock',
         marginGrade: computeMarginGrade(row.cheapest_supplier_price_eur, row.market_price_eur),
+        competitorCount: row.competitor_count ?? 0,
         marketPrice: row.market_price_local ?? null,
         marketCurrency: row.market_currency ?? null,
         cheapestMarketLink: row.market_url || null,
@@ -403,6 +411,7 @@ async function main(): Promise<void> {
           image: row.main_image || null,
           stockStatus: (row.total_stock ?? 0) > 0 ? 'in stock' : 'not in stock',
           marginGrade: computeMarginGrade(row.cheapest_supplier_price_eur, row.market_price_eur),
+          competitorCount: 0,
           marketPrice: row.market_price_local ?? null,
           marketCurrency: row.market_currency ?? null,
           cheapestMarketLink: row.market_url || null,

@@ -8,6 +8,7 @@ export type PublicProduct = {
   image: string | null;
   stockStatus: 'in stock' | 'not in stock';
   marginGrade: MarginGrade;
+  competitorCount: number;
   marketPrice: number | null;
   marketCurrency: string | null;
   cheapestMarketLink: string | null;
