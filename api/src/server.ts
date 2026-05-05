@@ -226,7 +226,11 @@ async function main(): Promise<void> {
           COALESCE(emp.offer_count, 0) AS competitor_count,
           emp.lowest_price AS market_price_local,
           emp.currency AS market_currency,
-          CASE WHEN emp.currency = 'EUR' THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) ELSE emp.lowest_price_eur END AS market_price_eur,
+          CASE
+            WHEN emp.currency = 'EUR'
+              THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
+            ELSE emp.lowest_price_eur / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
+          END AS market_price_eur,
           emp.product_url AS market_url
         FROM all_products ap
         LEFT JOIN consolidated.supplier_product csp ON csp.ean = ap.ean AND csp.stock_quantity > 0
@@ -332,7 +336,11 @@ async function main(): Promise<void> {
             tp.competitor_count,
             emp.lowest_price AS market_price_local,
             emp.currency AS market_currency,
-            CASE WHEN emp.currency = 'EUR' THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) ELSE emp.lowest_price_eur END AS market_price_eur,
+            CASE
+              WHEN emp.currency = 'EUR'
+                THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
+              ELSE emp.lowest_price_eur / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
+            END AS market_price_eur,
             emp.product_url AS market_url
           FROM top_products tp
           LEFT JOIN consolidated.supplier_product csp ON csp.ean = tp.ean AND csp.stock_quantity > 0
@@ -388,7 +396,11 @@ async function main(): Promise<void> {
           SUM(ISNULL(csp.stock_quantity, 0)) AS total_stock,
           emp.lowest_price AS market_price_local,
           emp.currency AS market_currency,
-          CASE WHEN emp.currency = 'EUR' THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) ELSE emp.lowest_price_eur END AS market_price_eur,
+          CASE
+            WHEN emp.currency = 'EUR'
+              THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) / 1.25
+            ELSE emp.lowest_price_eur / 1.25
+          END AS market_price_eur,
           emp.product_url AS market_url
         FROM enriched.product ep
         LEFT JOIN consolidated.supplier_product csp ON csp.ean = ep.ean AND csp.stock_quantity > 0
