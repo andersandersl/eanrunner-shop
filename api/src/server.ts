@@ -214,9 +214,14 @@ async function main(): Promise<void> {
 
     // Shared CTE for grade computation
     const gradeCte = `
-      WITH all_products AS (
-        SELECT ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at
+      WITH candidate_products AS (
+        SELECT TOP (5000) ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at
         FROM enriched.product ep ${/* whereClause injected below */ ''}
+        ORDER BY ep.enriched_at DESC
+      ),
+      all_products AS (
+        SELECT cp.ean, cp.title, cp.brand, cp.category, cp.main_image, cp.enriched_at
+        FROM candidate_products cp
       ),
       with_prices AS (
         SELECT
@@ -236,7 +241,7 @@ async function main(): Promise<void> {
         LEFT JOIN consolidated.supplier_product csp ON csp.ean = ap.ean AND csp.stock_quantity > 0
         LEFT JOIN enriched.market_price emp ON emp.ean = ap.ean AND emp.country = @market
         GROUP BY ap.ean, ap.title, ap.brand, ap.category, ap.main_image, ap.enriched_at,
-                 emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
+                 emp.offer_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
       ),
       with_grades AS (
         SELECT *,
@@ -321,19 +326,17 @@ async function main(): Promise<void> {
         result = await request.query(`
           WITH top_products AS (
             SELECT
-              ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at,
-              COALESCE(emp.offer_count, 0) AS competitor_count
+              ep.ean, ep.title, ep.brand, ep.category, ep.main_image, ep.enriched_at
             FROM enriched.product ep
-            LEFT JOIN enriched.market_price emp ON emp.ean = ep.ean AND emp.country = @market
             ${whereClause}
-            ORDER BY COALESCE(emp.offer_count, 0) DESC, ep.enriched_at DESC
+            ORDER BY ep.enriched_at DESC
             OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
           )
           SELECT
             tp.ean, tp.title, tp.brand, tp.category, tp.main_image, tp.enriched_at,
             MIN(csp.price_eur) AS cheapest_supplier_price_eur,
             SUM(ISNULL(csp.stock_quantity, 0)) AS total_stock,
-            tp.competitor_count,
+            COALESCE(emp.offer_count, 0) AS competitor_count,
             emp.lowest_price AS market_price_local,
             emp.currency AS market_currency,
             CASE
@@ -346,7 +349,7 @@ async function main(): Promise<void> {
           LEFT JOIN consolidated.supplier_product csp ON csp.ean = tp.ean AND csp.stock_quantity > 0
           LEFT JOIN enriched.market_price emp ON emp.ean = tp.ean AND emp.country = @market
           GROUP BY tp.ean, tp.title, tp.brand, tp.category, tp.main_image, tp.enriched_at,
-                   tp.competitor_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
+                   emp.offer_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
           ORDER BY competitor_count DESC, tp.enriched_at DESC
         `);
       }
