@@ -152,10 +152,25 @@ function buildInternalEmailHtml(payload: {
   `;
 }
 
-async function main(): Promise<void> {
-  const pool = await sql.connect(sqlConfig);
-  console.log('Connected to Azure SQL');
+let poolPromise: Promise<sql.ConnectionPool> | null = null;
 
+async function getPool(): Promise<sql.ConnectionPool> {
+  if (!poolPromise) {
+    poolPromise = sql.connect(sqlConfig)
+      .then((pool) => {
+        console.log('Connected to Azure SQL');
+        return pool;
+      })
+      .catch((err) => {
+        // Allow retries on the next request if first connection attempt fails.
+        poolPromise = null;
+        throw err;
+      });
+  }
+  return poolPromise;
+}
+
+async function main(): Promise<void> {
   const app = express();
 
   app.use(cors({ origin: WEB_ORIGIN }));
@@ -226,6 +241,7 @@ async function main(): Promise<void> {
     `;
 
     try {
+      const pool = await getPool();
       const request = pool.request();
       request.input('limit', sql.Int, limit);
       request.input('offset', sql.Int, offset);
@@ -342,6 +358,7 @@ async function main(): Promise<void> {
     }
 
     try {
+      const pool = await getPool();
       const request = pool.request();
       request.input('ean', sql.NVarChar, ean);
 
@@ -397,6 +414,7 @@ async function main(): Promise<void> {
     if (!ean) { res.status(400).json({ error: 'Missing EAN' }); return; }
 
     try {
+      const pool = await getPool();
       const request = pool.request();
       request.input('ean', sql.NVarChar, ean);
 
@@ -495,6 +513,7 @@ async function main(): Promise<void> {
     emailCooldownByEmail.set(normalizedEmail, now);
 
     try {
+      const pool = await getPool();
       const productRequest = pool.request();
       productRequest.input('ean', sql.NVarChar, payload.ean);
       const productResult = await productRequest.query(`
@@ -578,6 +597,7 @@ async function main(): Promise<void> {
 
   app.get('/api/public/categories', async (_req, res) => {
     try {
+      const pool = await getPool();
       const catRequest = pool.request();
       const catResult = await catRequest.query(`
         SELECT category, COUNT(*) AS product_count
@@ -624,6 +644,5 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('Failed to start WebVersion API', error);
-  process.exit(1);
+  console.error('Failed to bootstrap WebVersion API', error);
 });
