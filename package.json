@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "install:api": "npm --prefix api install",
+    "build": "npm run install:api && npm --prefix api run build",
+    "start": "npm --prefix api run start",
     "dev:web": "npm --prefix web run dev",
     "dev:api": "npm --prefix api run dev",
     "build:web": "npm --prefix web run build",
