@@ -32,7 +32,7 @@ function marginRangeLabel(grade: string, marketPrice: number | null, currency: s
     case 'C': return `Between ${fmt(marketPrice * 0.05)} to ${fmt(marketPrice * 0.10)}`;
     case 'D': return `Between ${currency === 'DKK' || currency === 'SEK' ? '0 kr' : '\u20ac0'} to ${fmt(marketPrice * 0.05)}`;
     case 'E': return `Between -${fmt(marketPrice * 0.10)} to ${currency === 'DKK' || currency === 'SEK' ? '0 kr' : '\u20ac0'}`;
-    case 'F': return `More than -${fmt(marketPrice * 0.10)}`;
+    case 'F': return `Less than -${fmt(marketPrice * 0.10)}`;
     default: return null;
   }
 }
@@ -535,7 +535,18 @@ function App() {
       setLoading(true);
       setError('');
       try {
-        const data = await getProducts(debouncedKeyword, 48, selectedCategory || undefined, selectedBrand || undefined, market, page, selectedGrades.size > 0 ? selectedGrades : undefined);
+        const normalizedKeyword = debouncedKeyword.trim();
+        const effectiveLimit = normalizedKeyword ? 200 : 48;
+        const effectivePage = normalizedKeyword ? 1 : page;
+        const data = await getProducts(
+          normalizedKeyword,
+          effectiveLimit,
+          selectedCategory || undefined,
+          selectedBrand || undefined,
+          market,
+          effectivePage,
+          selectedGrades.size > 0 ? selectedGrades : undefined,
+        );
         if (!active) return;
         setProducts(data.products);
         setTotalProducts(data.total ?? data.count);
@@ -556,13 +567,21 @@ function App() {
   }, [debouncedKeyword, selectedCategory, selectedBrand, market, selectedGrades]);
 
   const visibleProducts = useMemo(() => {
-    const filtered = inStockOnly ? products.filter((p) => p.stockStatus === 'in stock') : products;
+    const keyword = debouncedKeyword.trim().toLowerCase();
+    let filtered = inStockOnly ? products.filter((p) => p.stockStatus === 'in stock') : products;
+    if (keyword) {
+      filtered = filtered.filter((p) =>
+        p.ean.toLowerCase().includes(keyword)
+        || p.title.toLowerCase().includes(keyword)
+        || p.brand.toLowerCase().includes(keyword),
+      );
+    }
     return [...filtered].sort((a, b) => {
       const aNa = a.marginGrade === 'N/A' ? 1 : 0;
       const bNa = b.marginGrade === 'N/A' ? 1 : 0;
       return aNa - bNa;
     });
-  }, [products, inStockOnly]);
+  }, [products, inStockOnly, debouncedKeyword]);
 
   const modalProduct = useMemo(
     () => (modalEan ? products.find((p) => p.ean === modalEan) || null : null),
