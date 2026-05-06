@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import { getCatalogStats, submitSignupInterest } from './api';
@@ -9,6 +10,7 @@ function SignupPage() {
   const [companyVatNumber, setCompanyVatNumber] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [inStockProducts, setInStockProducts] = useState<number | null>(null);
+  const [totalProducts, setTotalProducts] = useState<number | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -16,8 +18,14 @@ function SignupPage() {
 
   useEffect(() => {
     getCatalogStats()
-      .then((stats) => setInStockProducts(stats.inStockProducts))
-      .catch(() => setInStockProducts(null))
+      .then((stats) => {
+        setInStockProducts(stats.inStockProducts);
+        setTotalProducts(stats.totalProducts);
+      })
+      .catch(() => {
+        setInStockProducts(null);
+        setTotalProducts(null);
+      })
       .finally(() => setLoadingStats(false));
   }, []);
 
@@ -71,7 +79,12 @@ function SignupPage() {
                 <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading live catalog stats…</span>
               ) : (
                 <span>
-                  You get instant access to <strong>{(inStockProducts ?? 0).toLocaleString()}</strong> in-stock products.
+                  You get instant access to <strong>{(inStockProducts ?? 0).toLocaleString()}</strong> in-stock products
+                  {typeof totalProducts === 'number' ? (
+                    <> out of <strong>{totalProducts.toLocaleString()}</strong> total products in the catalog.</>
+                  ) : (
+                    <>.</>
+                  )}
                 </span>
               )}
             </div>

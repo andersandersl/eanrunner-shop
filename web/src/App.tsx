@@ -19,6 +19,34 @@ const GRADE_STYLES: Record<string, { bg: string; text: string }> = {
 const PLACEHOLDER_IMAGE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Crect width='400' height='400' fill='%23F3F5F9'/%3E%3Ctext x='200' y='210' text-anchor='middle' font-family='Arial%2C sans-serif' font-size='18' fill='%239CA3AF'%3ENo Image%3C/text%3E%3C/svg%3E";
 
+function competitionLevel(competitorCount: number | null | undefined): 0 | 1 | 2 | 3 {
+  const count = Math.max(0, competitorCount ?? 0);
+  if (count === 0) return 0;
+  if (count === 1) return 1;
+  if (count <= 3) return 2;
+  return 3;
+}
+
+const COMPETITION_LEVEL_LABELS: Record<0 | 1 | 2 | 3, string> = {
+  0: 'No competition',
+  1: 'Low competition',
+  2: 'Medium competition',
+  3: 'High competition',
+};
+
+function competitionBadge(level: 0 | 1 | 2 | 3): { label: string; chiliColor: string; chip: string } {
+  switch (level) {
+    case 0:
+      return { label: 'No competition', chiliColor: 'text-emerald-600', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+    case 1:
+      return { label: 'Low competition', chiliColor: 'text-lime-600', chip: 'bg-lime-50 text-lime-700 border-lime-200' };
+    case 2:
+      return { label: 'Medium competition', chiliColor: 'text-amber-500', chip: 'bg-amber-50 text-amber-700 border-amber-200' };
+    default:
+      return { label: 'High competition', chiliColor: 'text-red-600', chip: 'bg-red-50 text-red-700 border-red-200' };
+  }
+}
+
 // ─── Product Card ─────────────────────────────────────────────────────────────
 
 function marginRangeLabel(grade: string, marketPrice: number | null, currency: string | null): string | null {
@@ -46,6 +74,8 @@ function ProductCard({
 }) {
   const grade = GRADE_STYLES[product.marginGrade] ?? GRADE_STYLES['N/A'];
   const rangeLabel = marginRangeLabel(product.marginGrade, product.marketPrice, product.marketCurrency);
+  const level = competitionLevel(product.competitorCount);
+  const hot = competitionBadge(level);
   return (
     <div className="bg-white rounded-xl border border-[hsl(220_14%_89%)] shadow-[0_1px_3px_0_rgb(0_0_0/0.06)] overflow-hidden flex flex-col hover:shadow-md transition-shadow">
       <Link to={`/product/${encodeURIComponent(product.ean)}`} className="block">
@@ -75,6 +105,10 @@ function ProductCard({
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${product.stockStatus === 'in stock' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
             {product.stockStatus === 'in stock' ? 'In stock' : 'Out of stock'}
+          </span>
+          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border font-medium ${hot.chip}`}>
+            <span className={`leading-none ${hot.chiliColor}`}>🌶</span>
+            {hot.label}
           </span>
         </div>
         {rangeLabel && (
@@ -212,12 +246,16 @@ function FilterSidebar({
   selectedBrand,
   keyword,
   inStockOnly,
+  hasPictureOnly,
+  selectedCompetitionLevels,
   selectedGrades,
   market,
   onSelectCategory,
   onSelectBrand,
   onKeywordChange,
   onInStockOnlyChange,
+  onHasPictureOnlyChange,
+  onSelectedCompetitionLevelsChange,
   onSelectedGradesChange,
   onMarketChange,
   productCount,
@@ -229,12 +267,16 @@ function FilterSidebar({
   selectedBrand: string;
   keyword: string;
   inStockOnly: boolean;
+  hasPictureOnly: boolean;
+  selectedCompetitionLevels: Set<number>;
   selectedGrades: Set<string>;
   market: string;
   onSelectCategory: (c: string) => void;
   onSelectBrand: (b: string) => void;
   onKeywordChange: (k: string) => void;
   onInStockOnlyChange: (v: boolean) => void;
+  onHasPictureOnlyChange: (v: boolean) => void;
+  onSelectedCompetitionLevelsChange: (v: Set<number>) => void;
   onSelectedGradesChange: (g: Set<string>) => void;
   onMarketChange: (m: string) => void;
   productCount: number;
@@ -331,6 +373,25 @@ function FilterSidebar({
             </button>
             <span className="text-xs text-[hsl(222_47%_8%)]">In stock only</span>
           </label>
+
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={hasPictureOnly}
+              onClick={() => onHasPictureOnlyChange(!hasPictureOnly)}
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                hasPictureOnly ? 'bg-[hsl(221_92%_55%)]' : 'bg-[hsl(220_14%_83%)]'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  hasPictureOnly ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+            <span className="text-xs text-[hsl(222_47%_8%)]">Has picture only</span>
+          </label>
         </div>
 
         {/* Margin grade filter */}
@@ -367,6 +428,45 @@ function FilterSidebar({
                   }`}
                 >
                   {g}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Competition filter */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(220_12%_50%)]">Competition</p>
+            {selectedCompetitionLevels.size > 0 && (
+              <button
+                type="button"
+                onClick={() => onSelectedCompetitionLevelsChange(new Set())}
+                className="text-[9px] font-medium text-[hsl(221_92%_55%)] hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {([0, 1, 2, 3] as const).map((level) => {
+              const active = selectedCompetitionLevels.has(level);
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => {
+                    const next = new Set(selectedCompetitionLevels);
+                    if (active) next.delete(level); else next.add(level);
+                    onSelectedCompetitionLevelsChange(next);
+                  }}
+                  className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-semibold border transition-all ${
+                    active
+                      ? 'bg-[hsl(221_80%_95%)] text-[hsl(221_92%_40%)] border-transparent ring-2 ring-offset-1 ring-[hsl(221_92%_55%)]'
+                      : 'bg-white text-[hsl(220_12%_50%)] border-[hsl(220_14%_85%)] hover:border-[hsl(220_14%_65%)]'
+                  }`}
+                >
+                  {COMPETITION_LEVEL_LABELS[level]}
                 </button>
               );
             })}
@@ -510,6 +610,8 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedBrand, setSelectedBrand] = useState('');
   const [inStockOnly, setInStockOnly] = useState(false);
+  const [hasPictureOnly, setHasPictureOnly] = useState(false);
+  const [selectedCompetitionLevels, setSelectedCompetitionLevels] = useState<Set<number>>(new Set());
   const [selectedGrades, setSelectedGrades] = useState<Set<string>>(new Set());
   const [market, setMarket] = useState('dk');
   const [products, setProducts] = useState<PublicProduct[]>([]);
@@ -578,6 +680,12 @@ function App() {
   const visibleProducts = useMemo(() => {
     const keyword = debouncedKeyword.trim().toLowerCase();
     let filtered = inStockOnly ? products.filter((p) => p.stockStatus === 'in stock') : products;
+    if (hasPictureOnly) {
+      filtered = filtered.filter((p) => !!p.image);
+    }
+    if (selectedCompetitionLevels.size > 0) {
+      filtered = filtered.filter((p) => selectedCompetitionLevels.has(competitionLevel(p.competitorCount)));
+    }
     if (keyword) {
       filtered = filtered.filter((p) =>
         p.ean.toLowerCase().includes(keyword)
@@ -590,7 +698,7 @@ function App() {
       const bNa = b.marginGrade === 'N/A' ? 1 : 0;
       return aNa - bNa;
     });
-  }, [products, inStockOnly, debouncedKeyword]);
+  }, [products, inStockOnly, hasPictureOnly, selectedCompetitionLevels, debouncedKeyword]);
 
   const modalProduct = useMemo(
     () => (modalEan ? products.find((p) => p.ean === modalEan) || null : null),
@@ -624,12 +732,16 @@ function App() {
           selectedBrand={selectedBrand}
           keyword={keyword}
           inStockOnly={inStockOnly}
+          hasPictureOnly={hasPictureOnly}
+          selectedCompetitionLevels={selectedCompetitionLevels}
           selectedGrades={selectedGrades}
           market={market}
           onSelectCategory={(c) => { setSelectedCategory(c); if (!c) setSelectedBrand(''); }}
           onSelectBrand={setSelectedBrand}
           onKeywordChange={setKeyword}
           onInStockOnlyChange={setInStockOnly}
+          onHasPictureOnlyChange={setHasPictureOnly}
+          onSelectedCompetitionLevelsChange={setSelectedCompetitionLevels}
           onSelectedGradesChange={setSelectedGrades}
           onMarketChange={setMarket}
           productCount={totalProducts}
