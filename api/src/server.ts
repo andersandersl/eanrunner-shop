@@ -114,6 +114,13 @@ const requestSupplierSchema = z.object({
   sourcePage: z.string().trim().max(200).optional(),
 });
 
+const signupInterestSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  email: z.string().trim().email(),
+  companyVatNumber: z.string().trim().min(4).max(40),
+  marketingConsent: z.literal(true),
+});
+
 const emailCooldownByEmail = new Map<string, number>();
 
 function buildRequesterEmailHtml(payload: {
@@ -622,6 +629,73 @@ async function main(): Promise<void> {
       });
     } catch (err) {
       console.error('Error processing supplier price request', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.get('/api/public/stats', async (_req, res) => {
+    try {
+      const pool = await getPool();
+      const [totalResult, inStockResult] = await Promise.all([
+        pool.request().query(`SELECT COUNT(*) AS total_products FROM enriched.product`),
+        pool.request().query(`
+          SELECT COUNT(DISTINCT ean) AS in_stock_products
+          FROM consolidated.supplier_product
+          WHERE stock_quantity > 0
+        `),
+      ]);
+
+      res.json({
+        totalProducts: totalResult.recordset[0]?.total_products ?? 0,
+        inStockProducts: inStockResult.recordset[0]?.in_stock_products ?? 0,
+      });
+    } catch (err) {
+      console.error('Error fetching catalog stats', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.post('/api/public/signup-interest', async (req, res) => {
+    const parsed = signupInterestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    const payload = parsed.data;
+    const normalizedEmail = payload.email.toLowerCase();
+    let internalEmailSent = false;
+
+    try {
+      if (RESEND_API_KEY && REQUEST_INTERNAL_EMAIL) {
+        const resend = new Resend(RESEND_API_KEY);
+        const result = await resend.emails.send({
+          from: REQUEST_FROM_EMAIL,
+          to: [REQUEST_INTERNAL_EMAIL],
+          subject: `New retailer signup: ${payload.companyVatNumber}`,
+          html: `
+            <h2>New retailer signup</h2>
+            <p><strong>Name:</strong> ${payload.name}</p>
+            <p><strong>Email:</strong> ${normalizedEmail}</p>
+            <p><strong>EU VAT:</strong> ${payload.companyVatNumber}</p>
+            <p><strong>Marketing consent:</strong> granted</p>
+          `,
+        });
+        internalEmailSent = !result.error;
+      }
+
+      console.log('Retailer signup interest received:', {
+        name: payload.name,
+        email: normalizedEmail,
+        companyVatNumber: payload.companyVatNumber,
+        marketingConsent: true,
+        internalEmailSent,
+        createdAt: new Date().toISOString(),
+      });
+
+      res.status(202).json({ accepted: true, internalEmailSent });
+    } catch (err) {
+      console.error('Error processing signup interest', err);
       res.status(500).json({ error: 'Internal server error' });
     }
   });

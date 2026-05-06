@@ -245,7 +245,13 @@ function FilterSidebar({
   const [catOpen, setCatOpen] = useState(true);
   const [brandOpen, setBrandOpen] = useState(true);
 
-  const brands = selectedCategory ? (brandsByCategory[selectedCategory] ?? []) : [];
+  const allBrands = useMemo(() => {
+    const s = new Set<string>();
+    Object.values(brandsByCategory).forEach((arr) => arr.forEach((b) => s.add(b)));
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [brandsByCategory]);
+
+  const brands = selectedCategory ? (brandsByCategory[selectedCategory] ?? []) : allBrands;
 
   const filteredCategories = useMemo(() => {
     if (!categorySearch.trim()) return categories;
@@ -422,8 +428,8 @@ function FilterSidebar({
           )}
         </div>
 
-        {/* Brand section — only shown when a category is selected */}
-        {selectedCategory && brands.length > 0 && (
+        {/* Brand section */}
+        {brands.length > 0 && (
           <div className="space-y-1.5">
             <button
               type="button"
@@ -447,6 +453,9 @@ function FilterSidebar({
 
             {brandOpen && (
               <>
+                {!selectedCategory && (
+                  <p className="text-[10px] text-[hsl(220_12%_50%)]">Showing all brands</p>
+                )}
                 <input
                   type="text"
                   value={brandSearch}
@@ -666,6 +675,13 @@ function App() {
                 `${totalProducts.toLocaleString()} products`
               )}
             </div>
+
+            <Link
+              to="/signup"
+              className="inline-flex items-center rounded-md bg-[hsl(221_92%_55%)] px-3 py-1.5 text-xs font-semibold text-white hover:brightness-95"
+            >
+              Register for free
+            </Link>
           </div>
 
           {/* Product grid */}
@@ -689,7 +705,9 @@ function App() {
                   </span>
                 ))}
               </div>
-              <p className="pt-0.5">To see supplier details, click <strong>Supplier</strong> on any product and enter your email.</p>
+              <p className="pt-0.5">
+                To unlock full supplier access, <Link to="/signup" className="font-semibold text-[hsl(221_92%_45%)] hover:underline">register for free</Link>.
+              </p>
             </div>
 
             {error && (

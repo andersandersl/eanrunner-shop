@@ -35,6 +35,18 @@ export type CategoriesResponse = {
   brandsByCategory: Record<string, string[]>;
 };
 
+export type CatalogStatsResponse = {
+  totalProducts: number;
+  inStockProducts: number;
+};
+
+export type SignupInterestPayload = {
+  name: string;
+  email: string;
+  companyVatNumber: string;
+  marketingConsent: boolean;
+};
+
 export type ProductTranslation = {
   languageCode: string;
   title: string | null;

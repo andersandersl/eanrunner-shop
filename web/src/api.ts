@@ -1,4 +1,11 @@
-import type { CategoriesResponse, ProductDetailResponse, ProductFullDetail, ProductListResponse } from './types';
+import type {
+  CatalogStatsResponse,
+  CategoriesResponse,
+  ProductDetailResponse,
+  ProductFullDetail,
+  ProductListResponse,
+  SignupInterestPayload,
+} from './types';
 
 const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
 const API_BASE = /^https?:\/\//i.test(RAW_API_BASE) ? RAW_API_BASE : `https://${RAW_API_BASE}`;
@@ -35,6 +42,10 @@ export function getCategories(): Promise<CategoriesResponse> {
   return readJson<CategoriesResponse>('/api/public/categories');
 }
 
+export function getCatalogStats(): Promise<CatalogStatsResponse> {
+  return readJson<CatalogStatsResponse>('/api/public/stats');
+}
+
 export function getProductByEan(ean: string): Promise<ProductDetailResponse> {
   return readJson<ProductDetailResponse>(`/api/public/products/${encodeURIComponent(ean)}`);
 }
@@ -45,6 +56,20 @@ export function getProductDetail(ean: string): Promise<ProductFullDetail> {
 
 export async function requestSupplierPrice(payload: { ean: string; email: string; sourcePage: string }): Promise<void> {
   const response = await fetch(`${API_BASE}/api/public/request-supplier-price`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = typeof body.error === 'string' ? body.error : `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+}
+
+export async function submitSignupInterest(payload: SignupInterestPayload): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/public/signup-interest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
