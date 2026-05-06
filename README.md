@@ -39,3 +39,5 @@ This is an isolated public-safe implementation for EANrunner.
 - This implementation does not modify the original project.
 - Email sending uses Resend when `RESEND_API_KEY` is set.
 - Requests are always logged in Firestore (`REQUESTS_COLLECTION`).
+- Azure App Service cutover notes: `AZURE_CUTOVER.md`
+- Google Cloud Run cutover notes: `CLOUD_RUN_CUTOVER.md`
