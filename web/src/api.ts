@@ -15,8 +15,23 @@ const RAW_API_BASE = import.meta.env.DEV
   : CLOUD_RUN_API_BASE;
 const API_BASE = /^https?:\/\//i.test(RAW_API_BASE) ? RAW_API_BASE : `https://${RAW_API_BASE}`;
 
-async function readJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
+function createHeaders(idToken?: string, allowedSuppliers?: string[], approvedEmail?: string): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (idToken) {
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  // Local dev fallback: pass approved suppliers from Firestore client state.
+  if (import.meta.env.DEV && allowedSuppliers && allowedSuppliers.length > 0) {
+    headers['x-approved-suppliers'] = allowedSuppliers.join(',');
+    if (approvedEmail) headers['x-approved-email'] = approvedEmail;
+  }
+  return headers;
+}
+
+async function readJson<T>(path: string, idToken?: string, allowedSuppliers?: string[], approvedEmail?: string): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: createHeaders(idToken, allowedSuppliers, approvedEmail),
+  });
   if (!response.ok) {
     throw new Error(`Request failed (${response.status})`);
   }
@@ -31,6 +46,9 @@ export function getProducts(
   market = 'dk',
   page = 1,
   grades?: Set<string>,
+  idToken?: string,
+  allowedSuppliers?: string[],
+  approvedEmail?: string,
 ): Promise<ProductListResponse> {
   const params = new URLSearchParams();
   if (query) params.set('query', query);
@@ -40,23 +58,28 @@ export function getProducts(
   if (brand) params.set('brand', brand);
   params.set('market', market);
   if (grades && grades.size > 0) params.set('grades', [...grades].join(','));
-  return readJson<ProductListResponse>(`/api/public/products?${params.toString()}`);
+  return readJson<ProductListResponse>(`/api/public/products?${params.toString()}`, idToken, allowedSuppliers, approvedEmail);
 }
 
-export function getCategories(): Promise<CategoriesResponse> {
-  return readJson<CategoriesResponse>('/api/public/categories');
+export function getCategories(idToken?: string): Promise<CategoriesResponse> {
+  return readJson<CategoriesResponse>('/api/public/categories', idToken);
 }
 
-export function getCatalogStats(): Promise<CatalogStatsResponse> {
-  return readJson<CatalogStatsResponse>('/api/public/stats');
+export function getCatalogStats(idToken?: string): Promise<CatalogStatsResponse> {
+  return readJson<CatalogStatsResponse>('/api/public/stats', idToken);
 }
 
-export function getProductByEan(ean: string): Promise<ProductDetailResponse> {
-  return readJson<ProductDetailResponse>(`/api/public/products/${encodeURIComponent(ean)}`);
+export function getProductByEan(ean: string, idToken?: string): Promise<ProductDetailResponse> {
+  return readJson<ProductDetailResponse>(`/api/public/products/${encodeURIComponent(ean)}`, idToken);
 }
 
-export function getProductDetail(ean: string): Promise<ProductFullDetail> {
-  return readJson<ProductFullDetail>(`/api/public/products/${encodeURIComponent(ean)}/detail`);
+export function getProductDetail(
+  ean: string,
+  idToken?: string,
+  allowedSuppliers?: string[],
+  approvedEmail?: string,
+): Promise<ProductFullDetail> {
+  return readJson<ProductFullDetail>(`/api/public/products/${encodeURIComponent(ean)}/detail`, idToken, allowedSuppliers, approvedEmail);
 }
 
 export async function requestSupplierPrice(payload: { ean: string; email: string; sourcePage: string }): Promise<void> {

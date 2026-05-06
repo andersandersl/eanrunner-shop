@@ -5,6 +5,8 @@ import { getCategories, getProducts } from './api';
 import type { CategoryEntry, PublicProduct } from './types';
 import logoIcon from './assets/logo-icon-transparent.svg';
 import RequestSupplierModal from './components/RequestSupplierModal';
+import LoginArea from './components/LoginArea';
+import { useAuth } from './auth-context';
 
 const PAGE_SIZE = 48;
 const MAX_TOP_UP_PAGES = 6;
@@ -95,14 +97,19 @@ function marginRangeLabel(grade: string, marketPrice: number | null, currency: s
 function ProductCard({
   product,
   onRequestPrice,
+  hasSupplierAccess,
 }: {
   product: PublicProduct;
   onRequestPrice: (ean: string) => void;
+  hasSupplierAccess?: boolean;
 }) {
   const grade = GRADE_STYLES[product.marginGrade] ?? GRADE_STYLES['N/A'];
   const rangeLabel = marginRangeLabel(product.marginGrade, product.marketPrice, product.marketCurrency);
   const level = competitionLevel(product.competitorCount);
   const hot = competitionBadge(level);
+  const hasActualMargin = product.actualMarginPercent != null;
+  const bestSupplier = product.supplierRows?.[0];
+
   return (
     <div className="bg-white rounded-xl border border-[hsl(220_14%_89%)] shadow-[0_1px_3px_0_rgb(0_0_0/0.06)] overflow-hidden flex flex-col hover:shadow-md transition-shadow">
       <Link to={`/product/${encodeURIComponent(product.ean)}`} className="block">
@@ -138,7 +145,32 @@ function ProductCard({
             <span className="truncate">{hot.label}</span>
           </span>
         </div>
-        {rangeLabel && (
+        {hasSupplierAccess ? (
+          <>
+            <p className="text-[9px] text-[hsl(220_12%_45%)] font-medium whitespace-nowrap overflow-hidden text-ellipsis">
+              Possible margin:{' '}
+              <span className="text-[hsl(222_47%_20%)] font-semibold">
+                {hasActualMargin
+                  ? `${product.actualMarginPercent?.toFixed(1)}%`
+                  : 'Not available for your approved suppliers'}
+              </span>
+            </p>
+            <p className="text-[9px] text-[hsl(220_12%_45%)] font-medium whitespace-nowrap overflow-hidden text-ellipsis">
+              Supplier:{' '}
+              <span className="text-[hsl(222_47%_20%)] font-semibold">
+                {bestSupplier ? bestSupplier.supplier : 'Not available for your approved suppliers'}
+              </span>
+              {bestSupplier ? ' · ' : ''}
+              {bestSupplier ? (
+                <span className="text-[hsl(222_47%_20%)] font-semibold">€{bestSupplier.price.toFixed(2)}</span>
+              ) : null}
+            </p>
+          </>
+        ) : hasActualMargin ? (
+          <p className="text-[9px] text-[hsl(220_12%_45%)] font-medium whitespace-nowrap overflow-hidden text-ellipsis">
+            Actual margin: <span className="text-[hsl(222_47%_20%)] font-semibold">{product.actualMarginPercent?.toFixed(1)}%</span>
+          </p>
+        ) : rangeLabel && (
           <p className="text-[9px] text-[hsl(220_12%_45%)] font-medium whitespace-nowrap overflow-hidden text-ellipsis">
             Est. margin: <span className="text-[hsl(222_47%_20%)] font-semibold">{rangeLabel}</span>
           </p>
@@ -161,14 +193,16 @@ function ProductCard({
           ) : (
             <span className="flex-1" />
           )}
-          <button
-            type="button"
-            onClick={() => onRequestPrice(product.ean)}
-            className="flex-1 flex items-center justify-center gap-1 text-[10px] font-medium text-white bg-[hsl(221_92%_55%)] rounded-md px-2 py-1.5 hover:bg-[hsl(221_92%_48%)] transition-colors cursor-pointer"
-          >
-            <Tag className="w-2.5 h-2.5 shrink-0" />
-            Supplier
-          </button>
+          {!hasSupplierAccess && (
+            <button
+              type="button"
+              onClick={() => onRequestPrice(product.ean)}
+              className="flex-1 flex items-center justify-center gap-1 text-[10px] font-medium text-white bg-[hsl(221_92%_55%)] rounded-md px-2 py-1.5 hover:bg-[hsl(221_92%_48%)] transition-colors cursor-pointer"
+            >
+              <Tag className="w-2.5 h-2.5 shrink-0" />
+              Supplier
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -543,6 +577,7 @@ function FilterSidebar({
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function App() {
+  const { user, idToken, approvedAccount } = useAuth();
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -561,6 +596,8 @@ function App() {
   const [categories, setCategories] = useState<CategoryEntry[]>([]);
   const [brandsByCategory, setBrandsByCategory] = useState<Record<string, string[]>>({});
 
+  const hasSupplierAccess = (approvedAccount?.allowedSuppliers?.length || 0) > 0 || approvedAccount?.isSuperAdmin === true;
+
   // Debounce keyword
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedKeyword(keyword), 350);
@@ -569,13 +606,13 @@ function App() {
 
   // Load categories on mount
   useEffect(() => {
-    getCategories()
+    getCategories(idToken)
       .then((data) => {
         setCategories(data.categories);
         setBrandsByCategory(data.brandsByCategory);
       })
       .catch((err) => console.error('Failed to load categories', err));
-  }, []);
+  }, [idToken]);
 
   // Load products whenever filters change
   useEffect(() => {
@@ -596,6 +633,9 @@ function App() {
           market,
           effectivePage,
           selectedGrades.size > 0 ? selectedGrades : undefined,
+          idToken,
+          approvedAccount?.allowedSuppliers,
+          approvedAccount?.email,
         );
         const backendTotal = data.total ?? data.count;
         const totalPages = Math.max(1, Math.ceil(backendTotal / effectiveLimit));
@@ -624,6 +664,9 @@ function App() {
             market,
             nextPage,
             selectedGrades.size > 0 ? selectedGrades : undefined,
+            idToken,
+            approvedAccount?.allowedSuppliers,
+            approvedAccount?.email,
           );
 
           if (!extra.products.length) break;
@@ -661,6 +704,9 @@ function App() {
     inStockOnly,
     hasPictureOnly,
     selectedCompetitionLevels,
+    idToken,
+    approvedAccount?.allowedSuppliers,
+    approvedAccount?.email,
   ]);
 
   // Reset to page 1 when filters change
@@ -790,6 +836,8 @@ function App() {
             >
               Register for free
             </Link>
+
+            <LoginArea />
           </div>
 
           {/* Product grid */}
@@ -797,7 +845,11 @@ function App() {
             {/* Info banner */}
             <div className="mb-5 rounded-lg border border-[hsl(221_60%_88%)] bg-[hsl(221_80%_97%)] px-4 py-3 text-xs text-[hsl(221_40%_35%)] space-y-1">
               <p className="font-semibold text-[hsl(221_60%_30%)] text-[11px] uppercase tracking-wide">About this catalog</p>
-              <p>Supplier names and exact prices are not shown. Each product displays a <strong>margin grade</strong> based on supplier cost vs. the cheapest public market price:</p>
+              <p>
+                {hasSupplierAccess
+                  ? 'You are signed in with supplier access. Prices, stock and margins use your approved suppliers only.'
+                  : 'Supplier names and exact prices are not shown. Each product displays a margin grade based on supplier cost vs. the cheapest public market price.'}
+              </p>
               <div className="flex flex-wrap gap-x-3 gap-y-1 pt-0.5">
                 {[
                   { grade: 'A', label: 'Above 20%', bg: 'bg-emerald-100', text: 'text-emerald-800' },
@@ -813,9 +865,11 @@ function App() {
                   </span>
                 ))}
               </div>
-              <p className="pt-0.5">
-                To unlock full supplier access, <Link to="/signup" className="font-semibold text-[hsl(221_92%_45%)] hover:underline">register for free</Link>.
-              </p>
+              {!user && (
+                <div className="pt-1">
+                  <p className="text-xs text-[hsl(221_40%_35%)]">Sign in via the <span className="font-semibold">Login</span> button to unlock supplier prices, stock and exact margins.</p>
+                </div>
+              )}
             </div>
 
             {error && (
@@ -836,7 +890,12 @@ function App() {
 
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
               {visibleProducts.map((product) => (
-                <ProductCard key={product.ean} product={product} onRequestPrice={setModalEan} />
+                <ProductCard
+                  key={product.ean}
+                  product={product}
+                  onRequestPrice={setModalEan}
+                  hasSupplierAccess={hasSupplierAccess}
+                />
               ))}
             </div>
 

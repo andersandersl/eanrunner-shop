@@ -5,6 +5,8 @@ import { getProductDetail } from './api';
 import type { ProductFullDetail } from './types';
 import RequestSupplierModal from './components/RequestSupplierModal';
 import { sanitizeHtml } from './sanitizeHtml';
+import { useAuth } from './auth-context';
+import LoginArea from './components/LoginArea';
 
 const LANG_LABELS: Record<string, string> = {
   'en': 'English',
@@ -21,6 +23,7 @@ function langLabel(code: string): string {
 }
 
 export default function ProductDetailPage() {
+  const { user, idToken, approvedAccount } = useAuth();
   const { ean } = useParams<{ ean: string }>();
   const navigate = useNavigate();
   const [product, setProduct] = useState<ProductFullDetail | null>(null);
@@ -29,15 +32,17 @@ export default function ProductDetailPage() {
   const [activeImage, setActiveImage] = useState(0);
   const [requestModal, setRequestModal] = useState(false);
 
+  const hasSupplierAccess = (approvedAccount?.allowedSuppliers?.length || 0) > 0 || approvedAccount?.isSuperAdmin === true;
+
   useEffect(() => {
     if (!ean) return;
     setLoading(true);
     setError('');
-    getProductDetail(ean)
+    getProductDetail(ean, idToken, approvedAccount?.allowedSuppliers, approvedAccount?.email)
       .then((data) => { setProduct(data); setActiveImage(0); })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load product'))
       .finally(() => setLoading(false));
-  }, [ean]);
+  }, [ean, idToken, approvedAccount?.allowedSuppliers, approvedAccount?.email]);
 
   if (loading) {
     return (
@@ -133,6 +138,49 @@ export default function ProductDetailPage() {
               </span>
             )}
           </div>
+
+          {!user && (
+            <LoginArea />
+          )}
+
+          {user && !hasSupplierAccess && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Your account is approved for login, but has no supplier permissions yet. Contact support to assign allowed suppliers.
+            </div>
+          )}
+
+          {user && hasSupplierAccess && product.supplierRows.length > 0 && (
+            <div className="rounded-lg border border-[hsl(220_14%_89%)] bg-white p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[hsl(220_12%_50%)] mb-2">Approved supplier prices</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[hsl(220_14%_89%)] text-[hsl(220_12%_50%)]">
+                      <th className="py-1.5 text-left">Supplier</th>
+                      <th className="py-1.5 text-left">Stock</th>
+                      <th className="py-1.5 text-left">Price (EUR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {product.supplierRows.map((row) => (
+                      <tr key={`${row.supplierCode}-${row.supplierName}`} className="border-b border-[hsl(220_18%_95%)] last:border-b-0">
+                        <td className="py-1.5 text-[hsl(222_47%_8%)]">{row.supplierName}</td>
+                        <td className="py-1.5 text-[hsl(222_47%_8%)]">{row.stockQuantity}</td>
+                        <td className="py-1.5 text-[hsl(222_47%_8%)]">{row.unitPriceEur.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {user && hasSupplierAccess && product.marketSnapshot && product.marketSnapshot.marginPercent != null && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              Actual margin: <strong>{product.marketSnapshot.marginPercent.toFixed(1)}%</strong>
+              {product.marketSnapshot.marginAmount != null ? ` (${product.marketSnapshot.marginAmount.toFixed(2)} ${product.marketSnapshot.currency || ''})` : ''}
+            </div>
+          )}
 
           {/* Quick specs */}
           <div className="grid grid-cols-2 gap-2 text-xs">

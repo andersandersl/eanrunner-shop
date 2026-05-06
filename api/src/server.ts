@@ -2,6 +2,9 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import type { Server } from 'node:http';
+import { cert, getApps, initializeApp as initializeFirebaseApp } from 'firebase-admin/app';
+import { getAuth as getFirebaseAuth } from 'firebase-admin/auth';
+import { getFirestore as getFirebaseFirestore } from 'firebase-admin/firestore';
 import sql from 'mssql';
 import { Resend } from 'resend';
 import { z } from 'zod';
@@ -18,6 +21,9 @@ const WEB_ORIGINS = WEB_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
 const REQUEST_COOLDOWN_MS = 60_000;
 const PUBLIC_RATE_LIMIT_WINDOW_MS = 60_000;
 const PUBLIC_RATE_LIMIT_MAX_REQUESTS = 120;
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'eanrunner';
+const KNOWN_SUPPLIER_CODES = ['dcs', 'difox', 'dremote', 'cenor', 'egenta'] as const;
+type SupplierCode = typeof KNOWN_SUPPLIER_CODES[number];
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const REQUEST_FROM_EMAIL = process.env.REQUEST_FROM_EMAIL || 'EANrunner <notifications@eanrunner.com>';
@@ -63,7 +69,16 @@ type PublicProduct = {
   marketPrice: number | null;
   marketCurrency: string | null;
   cheapestMarketLink: string | null;
+  actualMarginPercent: number | null;
+  actualMarginAmount: number | null;
   updatedAt: string | null;
+};
+
+type ApprovedAccount = {
+  email: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  allowedSuppliers: SupplierCode[];
 };
 
 type InternalSupplierDetail = {
@@ -86,6 +101,9 @@ type ProductRow = {
   market_currency: string | null;
   market_price_eur: number | null;
   market_url: string | null;
+  margin_amount_eur: number | null;
+  margin_percent: number | null;
+  best_supplier: string | null;
 };
 
 type CategoryRow = {
@@ -104,6 +122,44 @@ type SupplierRow = {
   stock_quantity: number;
   price_eur: number;
 };
+
+type SupplierDetailRow = {
+  supplier_code: string;
+  supplier_name: string;
+  stock_quantity: number;
+  price_eur: number;
+};
+
+const firebaseApp = (() => {
+  try {
+    if (getApps().length > 0) {
+      return getApps()[0];
+    }
+    // Support inline service account JSON via env var for local dev / CI
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    const credential = serviceAccountJson
+      ? cert(JSON.parse(serviceAccountJson) as object)
+      : undefined;
+    return initializeFirebaseApp(
+      credential
+        ? { credential, projectId: FIREBASE_PROJECT_ID }
+        : { projectId: FIREBASE_PROJECT_ID },
+    );
+  } catch (error) {
+    console.warn('Firebase Admin initialization failed. Authenticated supplier access will be unavailable.', error);
+    return null;
+  }
+})();
+
+const firebaseAuth = firebaseApp ? getFirebaseAuth(firebaseApp) : null;
+const firebaseDb = firebaseApp ? getFirebaseFirestore(firebaseApp) : null;
+
+// Eagerly probe Firestore to detect missing credentials at startup
+if (firebaseDb) {
+  firebaseDb.collection('approved_emails').limit(1).get()
+    .then(() => console.log('[Firebase] Firestore connection OK'))
+    .catch((err: Error) => console.warn('[Firebase] Firestore probe failed (token verification will still work, but approved_emails lookup will not):', err.message));
+}
 
 const ALLOWED_GRADES = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'N/A']);
 
@@ -184,6 +240,106 @@ function isLocalhostOrigin(origin: string): boolean {
     return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
   } catch {
     return false;
+  }
+}
+
+function normalizeSupplierCodes(value: unknown): SupplierCode[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<string>(KNOWN_SUPPLIER_CODES);
+  const normalized = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim().toLowerCase() : ''))
+    .filter((entry): entry is SupplierCode => allowed.has(entry));
+  return [...new Set(normalized)];
+}
+
+function supplierSqlFilter(allowedSuppliers: SupplierCode[], tableAlias = 'csp'): string {
+  if (allowedSuppliers.length === 0) return '';
+  const inList = allowedSuppliers.map((code) => `'${code}'`).join(',');
+  const field = tableAlias ? `${tableAlias}.supplier_code` : 'supplier_code';
+  return ` AND ${field} IN (${inList})`;
+}
+
+function extractBearerToken(authorizationHeader: string | undefined): string | null {
+  if (!authorizationHeader) return null;
+  const [scheme, token] = authorizationHeader.split(' ');
+  if (!scheme || !token || scheme.toLowerCase() !== 'bearer') return null;
+  return token;
+}
+
+function resolveLocalDevApprovedAccount(req: express.Request): ApprovedAccount | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const raw = (req.header('x-approved-suppliers') || '').trim();
+  if (!raw) return null;
+  const allowedSuppliers = normalizeSupplierCodes(raw.split(','));
+  if (allowedSuppliers.length === 0) return null;
+  const email = normalizeEmail(req.header('x-approved-email') || 'local-dev-user@eanrunner.local');
+  return {
+    email,
+    isAdmin: false,
+    isSuperAdmin: false,
+    allowedSuppliers,
+  };
+}
+
+async function resolveApprovedAccount(req: express.Request): Promise<ApprovedAccount | null> {
+  if (!firebaseAuth) {
+    return resolveLocalDevApprovedAccount(req);
+  }
+
+  const token = extractBearerToken(req.header('authorization'));
+  if (!token) {
+    return resolveLocalDevApprovedAccount(req);
+  }
+
+  try {
+    const decoded = await firebaseAuth.verifyIdToken(token);
+    const email = normalizeEmail(decoded.email || '');
+    if (!email) return null;
+
+    console.log('[auth] token verified for:', maskEmailForLogs(email));
+
+    // If Firestore is unavailable (e.g. no service account locally), fall back to
+    // any custom claims embedded in the token, or return a minimal approved account.
+    if (!firebaseDb) {
+      // Check for custom claims set server-side
+      const claims = decoded as Record<string, unknown>;
+      const rawAllowed = claims['allowedSuppliers'];
+      const isSuperAdmin = claims['isSuperAdmin'] === true;
+      const allowedSuppliers = isSuperAdmin
+        ? [...KNOWN_SUPPLIER_CODES]
+        : normalizeSupplierCodes(rawAllowed);
+      if (allowedSuppliers.length === 0 && !isSuperAdmin) return null;
+      return { email, isAdmin: claims['isAdmin'] === true, isSuperAdmin, allowedSuppliers };
+    }
+
+    const snapshot = await firebaseDb
+      .collection('approved_emails')
+      .where('email', '==', email)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      console.log('[auth] email not found in approved_emails:', maskEmailForLogs(email));
+      return null;
+    }
+
+    const raw = snapshot.docs[0].data();
+    const isSuperAdmin = raw.isSuperAdmin === true;
+    const allowedSuppliers = isSuperAdmin
+      ? [...KNOWN_SUPPLIER_CODES]
+      : normalizeSupplierCodes(raw.allowedSuppliers);
+
+    console.log('[auth] approved account:', maskEmailForLogs(email), '| suppliers:', allowedSuppliers, '| superAdmin:', isSuperAdmin);
+
+    return {
+      email,
+      isAdmin: raw.isAdmin === true,
+      isSuperAdmin,
+      allowedSuppliers,
+    };
+  } catch (err) {
+    console.warn('[resolveApprovedAccount] failed:', (err as Error)?.message ?? err);
+    return resolveLocalDevApprovedAccount(req);
   }
 }
 
@@ -300,6 +456,22 @@ async function main(): Promise<void> {
       return;
     }
 
+    const approvedAccount = await resolveApprovedAccount(req);
+    const allowedSuppliers = approvedAccount?.allowedSuppliers || [];
+    const hasSupplierAccess = allowedSuppliers.length > 0;
+    console.log(`[products] hasSupplierAccess=${hasSupplierAccess} suppliers=${JSON.stringify(allowedSuppliers)}`);
+    const supplierJoinFilter = supplierSqlFilter(allowedSuppliers);
+    const supplierSubFilter = supplierSqlFilter(allowedSuppliers, 'csp2');
+    const supplierExistsFilter = hasSupplierAccess
+      ? ` AND EXISTS (SELECT 1 FROM consolidated.supplier_product cspx WHERE cspx.ean = ep.ean AND cspx.stock_quantity > 0${supplierSqlFilter(allowedSuppliers, 'cspx')})`
+      : '';
+    const bestSupplierSelectCte = hasSupplierAccess
+      ? `(SELECT TOP 1 ISNULL(cs2.display_name, csp2.supplier_code) FROM consolidated.supplier_product csp2 LEFT JOIN consolidated.supplier cs2 ON cs2.supplier_code = csp2.supplier_code WHERE csp2.ean = ap.ean AND csp2.stock_quantity > 0${supplierSubFilter} ORDER BY csp2.price_eur ASC) AS best_supplier`
+      : `NULL AS best_supplier`;
+    const bestSupplierSelectFast = hasSupplierAccess
+      ? `(SELECT TOP 1 ISNULL(cs2.display_name, csp2.supplier_code) FROM consolidated.supplier_product csp2 LEFT JOIN consolidated.supplier cs2 ON cs2.supplier_code = csp2.supplier_code WHERE csp2.ean = tp.ean AND csp2.stock_quantity > 0${supplierSubFilter} ORDER BY csp2.price_eur ASC) AS best_supplier`
+      : `NULL AS best_supplier`;
+
     const limit = parsed.data.limit ?? 48;
     const page = parsed.data.page ?? 1;
     const offset = (page - 1) * limit;
@@ -340,9 +512,10 @@ async function main(): Promise<void> {
               THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
             ELSE emp.lowest_price_eur / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
           END AS market_price_eur,
-          emp.product_url AS market_url
+          emp.product_url AS market_url,
+          ${bestSupplierSelectCte}
         FROM all_products ap
-        LEFT JOIN consolidated.supplier_product csp ON csp.ean = ap.ean AND csp.stock_quantity > 0
+        LEFT JOIN consolidated.supplier_product csp ON csp.ean = ap.ean AND csp.stock_quantity > 0${supplierJoinFilter}
         LEFT JOIN enriched.market_price emp ON emp.ean = ap.ean AND emp.country = @market
         GROUP BY ap.ean, ap.title, ap.brand, ap.category, ap.main_image, ap.enriched_at,
                  emp.offer_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
@@ -383,7 +556,10 @@ async function main(): Promise<void> {
         request.input('brand', sql.NVarChar, rawBrand);
         conditions.push('ep.brand = @brand');
       }
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const baseWhereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const whereClause = baseWhereClause
+        ? `${baseWhereClause}${supplierExistsFilter}`
+        : (supplierExistsFilter ? `WHERE 1 = 1${supplierExistsFilter}` : '');
 
       let total: number;
       let result: sql.IResult<unknown>;
@@ -448,9 +624,10 @@ async function main(): Promise<void> {
                 THEN COALESCE(emp.lowest_price_eur, emp.lowest_price) / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
               ELSE emp.lowest_price_eur / (CASE WHEN @market = 'fi' THEN 1.255 ELSE 1.25 END)
             END AS market_price_eur,
-            emp.product_url AS market_url
+            emp.product_url AS market_url,
+            ${bestSupplierSelectFast}
           FROM top_products tp
-          LEFT JOIN consolidated.supplier_product csp ON csp.ean = tp.ean AND csp.stock_quantity > 0
+          LEFT JOIN consolidated.supplier_product csp ON csp.ean = tp.ean AND csp.stock_quantity > 0${supplierJoinFilter}
           LEFT JOIN enriched.market_price emp ON emp.ean = tp.ean AND emp.country = @market
           GROUP BY tp.ean, tp.title, tp.brand, tp.category, tp.main_image, tp.enriched_at,
                    emp.offer_count, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
@@ -459,6 +636,7 @@ async function main(): Promise<void> {
       }
 
       const products: PublicProduct[] = (result.recordset as ProductRow[]).map((row) => ({
+        
         ean: row.ean,
         title: row.title || '',
         brand: row.brand || '',
@@ -470,7 +648,16 @@ async function main(): Promise<void> {
         marketPrice: row.market_price_local ?? null,
         marketCurrency: row.market_currency ?? null,
         cheapestMarketLink: row.market_url || null,
+        actualMarginPercent: hasSupplierAccess && row.cheapest_supplier_price_eur != null && row.market_price_eur != null && row.market_price_eur > 0
+          ? Number((((row.market_price_eur - row.cheapest_supplier_price_eur) / row.market_price_eur) * 100).toFixed(1))
+          : null,
+        actualMarginAmount: hasSupplierAccess && row.cheapest_supplier_price_eur != null && row.market_price_eur != null
+          ? Number((row.market_price_eur - row.cheapest_supplier_price_eur).toFixed(2))
+          : null,
         updatedAt: row.enriched_at ? new Date(row.enriched_at).toISOString() : null,
+        ...(hasSupplierAccess && row.best_supplier && row.cheapest_supplier_price_eur != null
+          ? { supplierRows: [{ supplier: row.best_supplier, stock: row.total_stock ?? 0, price: row.cheapest_supplier_price_eur, currency: 'EUR' }] }
+          : {}),
       }));
 
       res.json({ products, count: products.length, total });
@@ -486,6 +673,11 @@ async function main(): Promise<void> {
       res.status(400).json({ error: 'Missing EAN' });
       return;
     }
+
+    const approvedAccount = await resolveApprovedAccount(req);
+    const allowedSuppliers = approvedAccount?.allowedSuppliers || [];
+    const hasSupplierAccess = allowedSuppliers.length > 0;
+    const supplierJoinFilter = supplierSqlFilter(allowedSuppliers);
 
     try {
       const pool = await getPool();
@@ -510,7 +702,7 @@ async function main(): Promise<void> {
           END AS market_price_eur,
           emp.product_url AS market_url
         FROM enriched.product ep
-        LEFT JOIN consolidated.supplier_product csp ON csp.ean = ep.ean AND csp.stock_quantity > 0
+        LEFT JOIN consolidated.supplier_product csp ON csp.ean = ep.ean AND csp.stock_quantity > 0${supplierJoinFilter}
         LEFT JOIN enriched.market_price emp ON emp.ean = ep.ean AND emp.country = 'dk'
         WHERE ep.ean = @ean
         GROUP BY ep.ean, ep.title, ep.brand, ep.main_image, ep.enriched_at, emp.lowest_price, emp.currency, emp.lowest_price_eur, emp.product_url
@@ -534,6 +726,12 @@ async function main(): Promise<void> {
           marketPrice: row.market_price_local ?? null,
           marketCurrency: row.market_currency ?? null,
           cheapestMarketLink: row.market_url || null,
+          actualMarginPercent: hasSupplierAccess && row.cheapest_supplier_price_eur != null && row.market_price_eur != null && row.market_price_eur > 0
+            ? Number((((row.market_price_eur - row.cheapest_supplier_price_eur) / row.market_price_eur) * 100).toFixed(1))
+            : null,
+          actualMarginAmount: hasSupplierAccess && row.cheapest_supplier_price_eur != null && row.market_price_eur != null
+            ? Number((row.market_price_eur - row.cheapest_supplier_price_eur).toFixed(2))
+            : null,
           updatedAt: row.enriched_at ? new Date(row.enriched_at).toISOString() : null,
         } as PublicProduct,
       });
@@ -548,12 +746,18 @@ async function main(): Promise<void> {
     const ean = (req.params.ean || '').trim();
     if (!ean) { res.status(400).json({ error: 'Missing EAN' }); return; }
 
+    const approvedAccount = await resolveApprovedAccount(req);
+    const allowedSuppliers = approvedAccount?.allowedSuppliers || [];
+    const hasSupplierAccess = allowedSuppliers.length > 0;
+    const supplierStockFilter = supplierSqlFilter(allowedSuppliers, 'csp');
+    const supplierStockFilterNoAlias = supplierSqlFilter(allowedSuppliers, '');
+
     try {
       const pool = await getPool();
       const request = pool.request();
       request.input('ean', sql.NVarChar, ean);
 
-      const [prodResult, transResult, stockResult] = await Promise.all([
+      const [prodResult, transResult, stockResult, supplierRowsResult, marketResult] = await Promise.all([
         request.query(`
           SELECT
             ep.ean, ep.title, ep.brand, ep.description, ep.category,
@@ -574,7 +778,29 @@ async function main(): Promise<void> {
           SELECT COUNT(DISTINCT supplier_code) AS supplier_count,
                  SUM(stock_quantity) AS total_stock
           FROM consolidated.supplier_product
-          WHERE ean = @ean AND stock_quantity > 0
+             WHERE ean = @ean AND stock_quantity > 0${supplierStockFilterNoAlias}
+        `),
+        hasSupplierAccess
+          ? pool.request().input('ean', sql.NVarChar, ean).query(`
+              SELECT
+                csp.supplier_code,
+                ISNULL(cs.display_name, csp.supplier_code) AS supplier_name,
+                csp.stock_quantity,
+                csp.price_eur
+              FROM consolidated.supplier_product csp
+              LEFT JOIN consolidated.supplier cs ON cs.supplier_code = csp.supplier_code
+              WHERE csp.ean = @ean AND csp.stock_quantity > 0${supplierStockFilter}
+              ORDER BY csp.price_eur ASC
+            `)
+          : Promise.resolve({ recordset: [] as SupplierDetailRow[] }),
+        pool.request().input('ean', sql.NVarChar, ean).query(`
+          SELECT TOP 1
+            emp.country,
+            emp.currency,
+            emp.lowest_price,
+            emp.lowest_price_eur
+          FROM enriched.market_price emp
+          WHERE emp.ean = @ean AND emp.country = 'dk'
         `),
       ]);
 
@@ -585,6 +811,26 @@ async function main(): Promise<void> {
 
       const p = prodResult.recordset[0];
       const stockRow = stockResult.recordset[0];
+      const supplierRows = (supplierRowsResult.recordset as SupplierDetailRow[]).map((row) => ({
+        supplierCode: row.supplier_code,
+        supplierName: row.supplier_name || row.supplier_code,
+        stockQuantity: row.stock_quantity || 0,
+        unitPriceEur: row.price_eur || 0,
+      }));
+
+      const marketRow = marketResult.recordset[0] as { country?: string; currency?: string | null; lowest_price?: number | null; lowest_price_eur?: number | null } | undefined;
+      const cheapestSupplierPriceEur = supplierRows.length > 0 ? supplierRows[0].unitPriceEur : null;
+      const vatFactor = 1.25;
+      const cheapestPriceGross = marketRow?.lowest_price ?? null;
+      const cheapestPriceNet = marketRow?.lowest_price_eur != null
+        ? Number((marketRow.lowest_price_eur / vatFactor).toFixed(2))
+        : null;
+      const marginAmount = hasSupplierAccess && cheapestPriceNet != null && cheapestSupplierPriceEur != null
+        ? Number((cheapestPriceNet - cheapestSupplierPriceEur).toFixed(2))
+        : null;
+      const marginPercent = marginAmount != null && cheapestPriceNet != null && cheapestPriceNet > 0
+        ? Number(((marginAmount / cheapestPriceNet) * 100).toFixed(1))
+        : null;
 
       let images: string[] = [];
       try { images = JSON.parse(p.images_json || '[]'); } catch { images = []; }
@@ -621,6 +867,16 @@ async function main(): Promise<void> {
         translations,
         supplierCount: stockRow?.supplier_count ?? 0,
         totalStock: stockRow?.total_stock ?? 0,
+        supplierRows,
+        marketSnapshot: hasSupplierAccess ? {
+          market: marketRow?.country || 'dk',
+          currency: marketRow?.currency || null,
+          cheapestPriceGross,
+          cheapestPriceNet,
+          cheapestSupplierPriceEur,
+          marginAmount,
+          marginPercent,
+        } : null,
         enrichedAt: p.enriched_at ? new Date(p.enriched_at).toISOString() : null,
       });
     } catch (err) {

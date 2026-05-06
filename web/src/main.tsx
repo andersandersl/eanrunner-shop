@@ -5,15 +5,18 @@ import './index.css'
 import App from './App.tsx'
 import ProductDetailPage from './ProductDetailPage.tsx'
 import SignupPage from './SignupPage.tsx'
+import { AuthProvider } from './auth-context.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<App />} />
-        <Route path="/product/:ean" element={<ProductDetailPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<App />} />
+          <Route path="/product/:ean" element={<ProductDetailPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   </StrictMode>,
 )
