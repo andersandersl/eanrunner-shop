@@ -23,7 +23,7 @@ function langLabel(code: string): string {
 }
 
 export default function ProductDetailPage() {
-  const { user, idToken, approvedAccount } = useAuth();
+  const { user, idToken, approvedAccount, loading: authLoading } = useAuth();
   const { ean } = useParams<{ ean: string }>();
   const navigate = useNavigate();
   const [product, setProduct] = useState<ProductFullDetail | null>(null);
@@ -36,13 +36,16 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     if (!ean) return;
+    if (authLoading) return;
+    if (user && hasSupplierAccess && !idToken) return;
+
     setLoading(true);
     setError('');
     getProductDetail(ean, idToken, approvedAccount?.allowedSuppliers, approvedAccount?.email)
       .then((data) => { setProduct(data); setActiveImage(0); })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load product'))
       .finally(() => setLoading(false));
-  }, [ean, idToken, approvedAccount?.allowedSuppliers, approvedAccount?.email]);
+  }, [ean, idToken, approvedAccount?.allowedSuppliers, approvedAccount?.email, authLoading, user, hasSupplierAccess]);
 
   if (loading) {
     return (

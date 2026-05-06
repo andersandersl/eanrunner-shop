@@ -20,8 +20,9 @@ function createHeaders(idToken?: string, allowedSuppliers?: string[], approvedEm
   if (idToken) {
     headers.Authorization = `Bearer ${idToken}`;
   }
-  // Local dev fallback: pass approved suppliers from Firestore client state.
-  if (import.meta.env.DEV && allowedSuppliers && allowedSuppliers.length > 0) {
+  // Pass approved suppliers from Firestore client state so API can fall back
+  // when backend Firestore lookup is unavailable.
+  if (allowedSuppliers && allowedSuppliers.length > 0) {
     headers['x-approved-suppliers'] = allowedSuppliers.join(',');
     if (approvedEmail) headers['x-approved-email'] = approvedEmail;
   }

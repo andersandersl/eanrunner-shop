@@ -4,6 +4,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
@@ -51,6 +52,27 @@ async function loadApprovedAccount(email: string): Promise<ApprovedAccount | nul
     isSuperAdmin: raw.isSuperAdmin === true,
     allowedSuppliers: normalizeSupplierIds(raw.allowedSuppliers),
   };
+}
+
+function authErrorMessage(error: unknown): string {
+  const code = typeof error === 'object' && error && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+
+  if (code === 'auth/unauthorized-domain') {
+    return `Google login is blocked for this domain. Add ${window.location.hostname} to Firebase Authentication > Settings > Authorized domains.`;
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Popup was blocked by the browser. Retrying with redirect sign-in...';
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return 'Google sign-in popup was closed before completing login.';
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return 'Google sign-in popup request was cancelled. Please try again.';
+  }
+
+  return 'Google sign-in failed. Please try again.';
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -111,7 +133,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authError,
     signInWithGoogle: async () => {
       setAuthError('');
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const provider = new GoogleAuthProvider();
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        const code = typeof error === 'object' && error && 'code' in error
+          ? String((error as { code?: unknown }).code || '')
+          : '';
+
+        if (code === 'auth/popup-blocked') {
+          setAuthError(authErrorMessage(error));
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+
+        setAuthError(authErrorMessage(error));
+        throw error;
+      }
     },
     signInWithEmail: async (email: string, password: string) => {
       setAuthError('');

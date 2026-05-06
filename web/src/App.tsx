@@ -577,7 +577,7 @@ function FilterSidebar({
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function App() {
-  const { user, idToken, approvedAccount } = useAuth();
+  const { user, idToken, approvedAccount, loading: authLoading } = useAuth();
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -618,6 +618,13 @@ function App() {
   useEffect(() => {
     let active = true;
     async function load() {
+      if (authLoading) {
+        return;
+      }
+      if (user && hasSupplierAccess && !idToken) {
+        return;
+      }
+
       setLoading(true);
       setError('');
       try {
@@ -695,6 +702,8 @@ function App() {
     load();
     return () => { active = false; };
   }, [
+    authLoading,
+    user,
     debouncedKeyword,
     selectedCategory,
     selectedBrand,

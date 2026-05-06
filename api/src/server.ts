@@ -266,6 +266,26 @@ function extractBearerToken(authorizationHeader: string | undefined): string | n
   return token;
 }
 
+function resolveHeaderApprovedAccount(req: express.Request, verifiedEmail?: string): ApprovedAccount | null {
+  const rawSuppliers = (req.header('x-approved-suppliers') || '').trim();
+  if (!rawSuppliers) return null;
+  const allowedSuppliers = normalizeSupplierCodes(rawSuppliers.split(','));
+  if (allowedSuppliers.length === 0) return null;
+
+  const headerEmail = normalizeEmail(req.header('x-approved-email') || '');
+  // If we have a verified Firebase email, require the header email to match.
+  if (verifiedEmail && headerEmail && headerEmail !== verifiedEmail) {
+    return null;
+  }
+
+  return {
+    email: verifiedEmail || headerEmail || 'unknown@eanrunner.local',
+    isAdmin: false,
+    isSuperAdmin: false,
+    allowedSuppliers,
+  };
+}
+
 function resolveLocalDevApprovedAccount(req: express.Request): ApprovedAccount | null {
   if (process.env.NODE_ENV === 'production') return null;
   const raw = (req.header('x-approved-suppliers') || '').trim();
@@ -283,12 +303,12 @@ function resolveLocalDevApprovedAccount(req: express.Request): ApprovedAccount |
 
 async function resolveApprovedAccount(req: express.Request): Promise<ApprovedAccount | null> {
   if (!firebaseAuth) {
-    return resolveLocalDevApprovedAccount(req);
+    return resolveLocalDevApprovedAccount(req) ?? resolveHeaderApprovedAccount(req);
   }
 
   const token = extractBearerToken(req.header('authorization'));
   if (!token) {
-    return resolveLocalDevApprovedAccount(req);
+    return resolveLocalDevApprovedAccount(req) ?? resolveHeaderApprovedAccount(req);
   }
 
   try {
@@ -296,7 +316,7 @@ async function resolveApprovedAccount(req: express.Request): Promise<ApprovedAcc
     const email = normalizeEmail(decoded.email || '');
     if (!email) return null;
 
-    console.log('[auth] token verified for:', maskEmailForLogs(email));
+    const headerFallback = resolveHeaderApprovedAccount(req, email);
 
     // If Firestore is unavailable (e.g. no service account locally), fall back to
     // any custom claims embedded in the token, or return a minimal approved account.
@@ -308,38 +328,40 @@ async function resolveApprovedAccount(req: express.Request): Promise<ApprovedAcc
       const allowedSuppliers = isSuperAdmin
         ? [...KNOWN_SUPPLIER_CODES]
         : normalizeSupplierCodes(rawAllowed);
-      if (allowedSuppliers.length === 0 && !isSuperAdmin) return null;
+      if (allowedSuppliers.length === 0 && !isSuperAdmin) return headerFallback;
       return { email, isAdmin: claims['isAdmin'] === true, isSuperAdmin, allowedSuppliers };
     }
 
-    const snapshot = await firebaseDb
-      .collection('approved_emails')
-      .where('email', '==', email)
-      .limit(1)
-      .get();
+    try {
+      const snapshot = await firebaseDb
+        .collection('approved_emails')
+        .where('email', '==', email)
+        .limit(1)
+        .get();
 
-    if (snapshot.empty) {
-      console.log('[auth] email not found in approved_emails:', maskEmailForLogs(email));
-      return null;
+      if (snapshot.empty) {
+        return headerFallback;
+      }
+
+      const raw = snapshot.docs[0].data();
+      const isSuperAdmin = raw.isSuperAdmin === true;
+      const allowedSuppliers = isSuperAdmin
+        ? [...KNOWN_SUPPLIER_CODES]
+        : normalizeSupplierCodes(raw.allowedSuppliers);
+
+      return {
+        email,
+        isAdmin: raw.isAdmin === true,
+        isSuperAdmin,
+        allowedSuppliers,
+      };
+    } catch (firestoreErr) {
+      console.warn('[resolveApprovedAccount] firestore lookup failed:', (firestoreErr as Error)?.message ?? firestoreErr);
+      return headerFallback;
     }
-
-    const raw = snapshot.docs[0].data();
-    const isSuperAdmin = raw.isSuperAdmin === true;
-    const allowedSuppliers = isSuperAdmin
-      ? [...KNOWN_SUPPLIER_CODES]
-      : normalizeSupplierCodes(raw.allowedSuppliers);
-
-    console.log('[auth] approved account:', maskEmailForLogs(email), '| suppliers:', allowedSuppliers, '| superAdmin:', isSuperAdmin);
-
-    return {
-      email,
-      isAdmin: raw.isAdmin === true,
-      isSuperAdmin,
-      allowedSuppliers,
-    };
   } catch (err) {
     console.warn('[resolveApprovedAccount] failed:', (err as Error)?.message ?? err);
-    return resolveLocalDevApprovedAccount(req);
+    return resolveLocalDevApprovedAccount(req) ?? resolveHeaderApprovedAccount(req);
   }
 }
 
