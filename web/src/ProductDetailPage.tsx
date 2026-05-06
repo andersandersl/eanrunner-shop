@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Tag, Package, Layers } from 'lucide-react';
-import { getProductDetail, requestSupplierPrice } from './api';
+import { getProductDetail } from './api';
 import type { ProductFullDetail } from './types';
+import RequestSupplierModal from './components/RequestSupplierModal';
+import { sanitizeHtml } from './sanitizeHtml';
 
 const LANG_LABELS: Record<string, string> = {
   'en': 'English',
@@ -156,7 +158,7 @@ export default function ProductDetailPage() {
               <h2 className="text-xs font-semibold uppercase tracking-wider text-[hsl(220_12%_50%)] mb-1.5">Description (EN)</h2>
               <div
                 className="text-sm text-[hsl(222_20%_20%)] leading-relaxed prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{ __html: product.description }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(product.description) }}
               />
             </div>
           )}
@@ -174,7 +176,7 @@ export default function ProductDetailPage() {
                 {t.description && (
                   <div
                     className="text-xs text-[hsl(222_20%_30%)] leading-relaxed line-clamp-6"
-                    dangerouslySetInnerHTML={{ __html: t.description }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(t.description) }}
                   />
                 )}
                 {!t.description && <p className="text-xs text-[hsl(220_12%_60%)] italic">Title only</p>}
@@ -220,7 +222,12 @@ export default function ProductDetailPage() {
       <div className="h-16" />
 
       {requestModal && (
-        <RequestSupplierModal ean={product.ean} title={product.title} onClose={() => setRequestModal(false)} />
+        <RequestSupplierModal
+          ean={product.ean}
+          title={product.title}
+          sourcePage="webversion-detail"
+          onClose={() => setRequestModal(false)}
+        />
       )}
     </div>
   );
@@ -256,62 +263,3 @@ function Section({ title, icon, children }: { title: string; icon?: React.ReactN
   );
 }
 
-function RequestSupplierModal({ ean, title, onClose }: { ean: string; title: string; onClose: () => void }) {
-  const [email, setEmail] = useState('');
-  const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email) return;
-    setState('sending');
-    try {
-      await requestSupplierPrice({ ean, email, sourcePage: 'webversion-detail' });
-      setState('done');
-    } catch {
-      setState('error');
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border border-[hsl(220_14%_89%)]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(220_14%_89%)]">
-          <h2 className="text-base font-semibold text-[hsl(222_47%_8%)]">Request supplier details</h2>
-          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[hsl(220_14%_93%)] cursor-pointer">✕</button>
-        </div>
-        <div className="px-6 py-5">
-          {state === 'done' ? (
-            <div className="text-center py-4">
-              <p className="font-semibold text-[hsl(222_47%_8%)]">Request sent!</p>
-              <p className="text-sm text-[hsl(220_12%_40%)] mt-1">Supplier details will arrive in your inbox shortly.</p>
-              <button onClick={onClose} className="mt-4 text-sm text-[hsl(221_92%_55%)] hover:underline cursor-pointer">Close</button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <p className="text-sm text-[hsl(220_12%_40%)]">
-                Enter your email and we'll send supplier name, price, and stock details for <strong>{title}</strong>.
-              </p>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                required
-                autoFocus
-                className="w-full border border-[hsl(220_14%_89%)] rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(221_92%_55%)] focus:border-transparent"
-              />
-              {state === 'error' && <p className="text-xs text-red-600">Could not submit request. Please try again.</p>}
-              <button
-                type="submit"
-                disabled={state === 'sending'}
-                className="w-full py-2.5 text-sm font-medium text-white bg-[hsl(221_92%_55%)] rounded-md hover:bg-[hsl(221_92%_48%)] disabled:opacity-60 transition-colors cursor-pointer"
-              >
-                {state === 'sending' ? 'Sending...' : 'Send request'}
-              </button>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}

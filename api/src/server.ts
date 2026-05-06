@@ -1,15 +1,23 @@
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
+import type { Server } from 'node:http';
 import sql from 'mssql';
 import { Resend } from 'resend';
 import { z } from 'zod';
 
 dotenv.config();
 
-const PORT = Number(process.env.PORT || 8787);
-const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:5173';
+const DEFAULT_PORT = 8787;
+const PORT = (() => {
+  const parsed = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PORT;
+})();
+const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:5175';
 const WEB_ORIGINS = WEB_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+const REQUEST_COOLDOWN_MS = 60_000;
+const PUBLIC_RATE_LIMIT_WINDOW_MS = 60_000;
+const PUBLIC_RATE_LIMIT_MAX_REQUESTS = 120;
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const REQUEST_FROM_EMAIL = process.env.REQUEST_FROM_EMAIL || 'EANrunner <notifications@eanrunner.com>';
@@ -136,6 +144,48 @@ const signupInterestSchema = z.object({
 });
 
 const emailCooldownByEmail = new Map<string, number>();
+const rateLimitByIp = new Map<string, { count: number; resetAt: number }>();
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function maskEmailForLogs(email: string): string {
+  const [local = '', domain = ''] = email.split('@');
+  if (!local || !domain) return '***';
+  const visible = local.slice(0, 2);
+  return `${visible}***@${domain}`;
+}
+
+function pruneEmailCooldown(now: number): void {
+  for (const [email, ts] of emailCooldownByEmail.entries()) {
+    if (now - ts >= REQUEST_COOLDOWN_MS) {
+      emailCooldownByEmail.delete(email);
+    }
+  }
+}
+
+function enforcePublicRateLimit(ip: string, now: number): { limited: boolean; retryAfter: number } {
+  const current = rateLimitByIp.get(ip);
+  if (!current || now >= current.resetAt) {
+    rateLimitByIp.set(ip, { count: 1, resetAt: now + PUBLIC_RATE_LIMIT_WINDOW_MS });
+    return { limited: false, retryAfter: 0 };
+  }
+  if (current.count >= PUBLIC_RATE_LIMIT_MAX_REQUESTS) {
+    return { limited: true, retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)) };
+  }
+  current.count += 1;
+  return { limited: false, retryAfter: 0 };
+}
+
+function isLocalhostOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 function buildRequesterEmailHtml(payload: {
   ean: string;
@@ -201,15 +251,30 @@ async function main(): Promise<void> {
   if (!envSummary.userConfigured || !envSummary.passwordConfigured) {
     console.warn('SQL configuration is incomplete', envSummary);
   }
+  if (process.env.NODE_ENV === 'production' && WEB_ORIGINS.some((origin) => origin.includes('localhost'))) {
+    console.warn('CORS is configured with localhost origins in production', { WEB_ORIGINS });
+  }
 
   app.use(cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
       if (WEB_ORIGINS.includes(origin)) return callback(null, true);
+      if (process.env.NODE_ENV !== 'production' && isLocalhostOrigin(origin)) return callback(null, true);
       return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
   }));
   app.use(express.json({ limit: '1mb' }));
+  app.use('/api/public', (req, res, next) => {
+    const now = Date.now();
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const { limited, retryAfter } = enforcePublicRateLimit(ip, now);
+    if (limited) {
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+      return;
+    }
+    next();
+  });
 
   app.get('/health', async (_req, res) => {
     try {
@@ -572,11 +637,12 @@ async function main(): Promise<void> {
     }
 
     const payload = parsed.data;
-    const normalizedEmail = payload.email.toLowerCase();
+    const normalizedEmail = normalizeEmail(payload.email);
     const now = Date.now();
+    pruneEmailCooldown(now);
 
     const lastRequest = emailCooldownByEmail.get(normalizedEmail) || 0;
-    if (now - lastRequest < 60_000) {
+    if (now - lastRequest < REQUEST_COOLDOWN_MS) {
       res.status(429).json({ error: 'Too many requests. Please wait a minute.' });
       return;
     }
@@ -647,7 +713,7 @@ async function main(): Promise<void> {
 
       console.log('Supplier price request logged:', {
         ean: payload.ean,
-        email: normalizedEmail,
+        email: maskEmailForLogs(normalizedEmail),
         sourcePage: payload.sourcePage || '',
         createdAt: new Date().toISOString(),
         requesterEmailSent,
@@ -695,7 +761,7 @@ async function main(): Promise<void> {
     }
 
     const payload = parsed.data;
-    const normalizedEmail = payload.email.toLowerCase();
+    const normalizedEmail = normalizeEmail(payload.email);
     let internalEmailSent = false;
 
     try {
@@ -718,7 +784,7 @@ async function main(): Promise<void> {
 
       console.log('Retailer signup interest received:', {
         name: payload.name,
-        email: normalizedEmail,
+        email: maskEmailForLogs(normalizedEmail),
         companyVatNumber: payload.companyVatNumber,
         marketingConsent: true,
         internalEmailSent,
@@ -775,9 +841,27 @@ async function main(): Promise<void> {
     }
   });
 
-  app.listen(PORT, () => {
+  const server: Server = app.listen(PORT, () => {
     console.log(`WebVersion API listening on http://localhost:${PORT}`);
   });
+
+  const shutdown = async (signal: string) => {
+    console.log(`Received ${signal}, shutting down WebVersion API...`);
+    server.close(async () => {
+      try {
+        if (poolPromise) {
+          const pool = await poolPromise.catch(() => null);
+          await pool?.close();
+        }
+      } catch {
+        // Ignore close errors during shutdown.
+      }
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => { void shutdown('SIGINT'); });
+  process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 }
 
 main().catch((error) => {

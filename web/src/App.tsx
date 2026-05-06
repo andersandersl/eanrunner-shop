@@ -1,10 +1,13 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, Search, Tag, X } from 'lucide-react';
-import { getCategories, getProducts, requestSupplierPrice } from './api';
+import { getCategories, getProducts } from './api';
 import type { CategoryEntry, PublicProduct } from './types';
 import logoIcon from './assets/logo-icon-transparent.svg';
+import RequestSupplierModal from './components/RequestSupplierModal';
+
+const PAGE_SIZE = 48;
+const MAX_TOP_UP_PAGES = 6;
 
 const GRADE_STYLES: Record<string, { bg: string; text: string }> = {
   A: { bg: 'bg-emerald-100', text: 'text-emerald-800' },
@@ -77,13 +80,13 @@ function marginRangeLabel(grade: string, marketPrice: number | null, currency: s
   if (!marketPrice || marketPrice <= 0 || grade === 'N/A') return null;
   const sym = currency === 'DKK' || currency === 'SEK' ? '' : '€';
   const suffix = currency === 'DKK' ? ' kr' : currency === 'SEK' ? ' kr' : '';
-  const fmt = (v: number) => `${sym}${Math.round(Math.abs(v))}${suffix}`;
+  const fmt = (v: number) => `${sym}${Math.round(Math.abs(v)).toLocaleString()}${suffix}`;
   switch (grade) {
     case 'A': return `More than +${fmt(marketPrice * 0.20)}`;
     case 'B': return `Between ${fmt(marketPrice * 0.10)} to ${fmt(marketPrice * 0.20)}`;
     case 'C': return `Between ${fmt(marketPrice * 0.05)} to ${fmt(marketPrice * 0.10)}`;
     case 'D': return `Between ${currency === 'DKK' || currency === 'SEK' ? '0 kr' : '\u20ac0'} to ${fmt(marketPrice * 0.05)}`;
-    case 'E': return `Between -${fmt(marketPrice * 0.10)} to ${currency === 'DKK' || currency === 'SEK' ? '0 kr' : '\u20ac0'}`;
+    case 'E': return `Loss between 0 and -${fmt(marketPrice * 0.10)}`;
     case 'F': return `Less than -${fmt(marketPrice * 0.10)}`;
     default: return null;
   }
@@ -121,8 +124,8 @@ function ProductCard({
           <h3 className="text-xs font-semibold text-[hsl(222_47%_8%)] line-clamp-2 leading-snug mt-0.5">{product.title}</h3>
           <p className="text-[9px] text-[hsl(220_12%_60%)] mt-0.5 font-mono tracking-tight">EAN: {product.ean}</p>
         </Link>
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-medium ${
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+          <span className={`inline-flex items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-full font-medium ${
             product.stockStatus === 'in stock'
               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
               : 'bg-gray-100 text-gray-500 border border-gray-200'
@@ -130,13 +133,13 @@ function ProductCard({
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${product.stockStatus === 'in stock' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
             {product.stockStatus === 'in stock' ? 'In stock' : 'Out of stock'}
           </span>
-          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border font-medium ${hot.chip}`}>
+          <span className={`inline-flex max-w-full items-center gap-1 whitespace-nowrap px-1.5 py-0.5 rounded-full border font-medium ${hot.chip}`}>
             <span className={`leading-none ${hot.chiliColor}`}>🌶</span>
-            {hot.label}
+            <span className="truncate">{hot.label}</span>
           </span>
         </div>
         {rangeLabel && (
-          <p className="text-[10px] text-[hsl(220_12%_45%)] font-medium">
+          <p className="text-[9px] text-[hsl(220_12%_45%)] font-medium whitespace-nowrap overflow-hidden text-ellipsis">
             Est. margin: <span className="text-[hsl(222_47%_20%)] font-semibold">{rangeLabel}</span>
           </p>
         )}
@@ -166,95 +169,6 @@ function ProductCard({
             <Tag className="w-2.5 h-2.5 shrink-0" />
             Supplier
           </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Request Price Modal ──────────────────────────────────────────────────────
-
-function RequestPriceModal({
-  product,
-  onClose,
-}: {
-  product: PublicProduct;
-  onClose: () => void;
-}) {
-  const [email, setEmail] = useState('');
-  const [state, setState] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!email) return;
-    setState('sending');
-    try {
-      await requestSupplierPrice({ ean: product.ean, email, sourcePage: 'webversion-catalog' });
-      setState('done');
-    } catch {
-      setState('error');
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border border-[hsl(220_14%_89%)]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(220_14%_89%)]">
-          <div>
-            <h2 className="text-base font-semibold text-[hsl(222_47%_8%)]">Request supplier price</h2>
-            <p className="text-xs text-[hsl(220_12%_40%)] mt-0.5 line-clamp-1">{product.title}</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[hsl(220_14%_93%)] cursor-pointer transition-colors text-[hsl(220_12%_40%)]">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="px-6 py-5">
-          {state === 'done' ? (
-            <div className="text-center py-4">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
-                <span className="text-emerald-600 text-lg">✓</span>
-              </div>
-              <p className="font-semibold text-[hsl(222_47%_8%)]">Request sent!</p>
-              <p className="text-sm text-[hsl(220_12%_40%)] mt-1">Supplier details will arrive in your inbox shortly.</p>
-              <button onClick={onClose} className="mt-4 text-sm text-[hsl(221_92%_55%)] hover:underline cursor-pointer">Close</button>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <p className="text-sm text-[hsl(220_12%_40%)]">
-                Enter your email and we'll send you the supplier name, price, and stock details for this product.
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-[hsl(222_47%_8%)]" htmlFor="req-email">Email address</label>
-                <input
-                  ref={inputRef}
-                  id="req-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@company.com"
-                  required
-                  className="w-full border border-[hsl(220_14%_89%)] rounded-md px-3 py-2 text-sm text-[hsl(222_47%_8%)] placeholder:text-[hsl(220_12%_60%)] focus:outline-none focus:ring-2 focus:ring-[hsl(221_92%_55%)] focus:border-transparent"
-                />
-              </div>
-              {state === 'error' && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-                  Could not submit request. Please try again.
-                </p>
-              )}
-              <button
-                type="submit"
-                disabled={state === 'sending'}
-                className="w-full py-2.5 text-sm font-medium text-white bg-[hsl(221_92%_55%)] rounded-md hover:bg-[hsl(221_92%_48%)] disabled:opacity-60 transition-colors cursor-pointer"
-              >
-                {state === 'sending' ? 'Sending...' : 'Send request'}
-              </button>
-            </form>
-          )}
         </div>
       </div>
     </div>
@@ -395,7 +309,7 @@ function FilterSidebar({
                 }`}
               />
             </button>
-            <span className="text-xs text-[hsl(222_47%_8%)]">In stock only</span>
+            <span className="text-xs text-[hsl(222_47%_8%)] whitespace-nowrap">In stock only</span>
           </label>
 
           <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -414,7 +328,7 @@ function FilterSidebar({
                 }`}
               />
             </button>
-            <span className="text-xs text-[hsl(222_47%_8%)]">Has picture only</span>
+            <span className="text-xs text-[hsl(222_47%_8%)] whitespace-nowrap">Has picture only</span>
           </label>
         </div>
 
@@ -484,7 +398,7 @@ function FilterSidebar({
                     if (active) next.delete(level); else next.add(level);
                     onSelectedCompetitionLevelsChange(next);
                   }}
-                  className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-[11px] font-semibold border transition-all ${
+                  className={`inline-flex items-center justify-center whitespace-nowrap px-2 py-0.5 rounded text-[11px] font-semibold border transition-all ${
                     active
                       ? 'bg-[hsl(221_80%_95%)] text-[hsl(221_92%_40%)] border-transparent ring-2 ring-offset-1 ring-[hsl(221_92%_55%)]'
                       : 'bg-white text-[hsl(220_12%_50%)] border-[hsl(220_14%_85%)] hover:border-[hsl(220_14%_65%)]'
@@ -672,7 +586,7 @@ function App() {
       try {
         const normalizedKeyword = debouncedKeyword.trim();
         const normalizedKeywordLower = normalizedKeyword.toLowerCase();
-        const effectiveLimit = 48;
+        const effectiveLimit = PAGE_SIZE;
         const effectivePage = normalizedKeyword ? 1 : page;
         const data = await getProducts(
           normalizedKeyword,
@@ -690,15 +604,17 @@ function App() {
         const seenEans = new Set(merged.map((p) => p.ean));
 
         let nextPage = effectivePage + 1;
+        let extraPagesFetched = 0;
         while (
           nextPage <= totalPages
+          && extraPagesFetched < MAX_TOP_UP_PAGES
           && applyClientFilters(
             merged,
             normalizedKeywordLower,
             inStockOnly,
             hasPictureOnly,
             selectedCompetitionLevels,
-          ).length < 48
+          ).length < PAGE_SIZE
         ) {
           const extra = await getProducts(
             normalizedKeyword,
@@ -711,13 +627,16 @@ function App() {
           );
 
           if (!extra.products.length) break;
+          const beforeLength = merged.length;
           for (const item of extra.products) {
             if (!seenEans.has(item.ean)) {
               seenEans.add(item.ean);
               merged.push(item);
             }
           }
+          if (merged.length === beforeLength) break;
           nextPage += 1;
+          extraPagesFetched += 1;
         }
 
         if (!active) return;
@@ -774,7 +693,7 @@ function App() {
       const bNa = b.marginGrade === 'N/A' ? 1 : 0;
       return aNa - bNa;
       })
-      .slice(0, 48);
+      .slice(0, PAGE_SIZE);
   }, [products, inStockOnly, hasPictureOnly, selectedCompetitionLevels, debouncedKeyword]);
 
   const modalProduct = useMemo(
@@ -885,7 +804,7 @@ function App() {
                   { grade: 'B', label: '10–20%', bg: 'bg-blue-100', text: 'text-blue-800' },
                   { grade: 'C', label: '5–10%', bg: 'bg-yellow-100', text: 'text-yellow-800' },
                   { grade: 'D', label: '0–5%', bg: 'bg-orange-100', text: 'text-orange-800' },
-                  { grade: 'E', label: 'Small loss (0–10%)', bg: 'bg-red-100', text: 'text-red-800' },
+                  { grade: 'E', label: 'Loss 0–10%', bg: 'bg-red-100', text: 'text-red-800' },
                   { grade: 'F', label: 'Loss >10%', bg: 'bg-red-200', text: 'text-red-900' },
                 ].map(({ grade, label, bg, text }) => (
                   <span key={grade} className="inline-flex items-center gap-1">
@@ -922,7 +841,7 @@ function App() {
             </div>
 
             {/* Pagination */}
-            {totalProducts > 48 && !loading && (
+            {totalProducts > PAGE_SIZE && !loading && (
               <div className="flex items-center justify-center gap-3 mt-8 pb-2">
                 <button
                   type="button"
@@ -933,12 +852,12 @@ function App() {
                   ← Previous
                 </button>
                 <span className="text-xs text-[hsl(220_12%_45%)]">
-                  Page {page} of {Math.ceil(totalProducts / 48)}
+                  Page {page} of {Math.ceil(totalProducts / PAGE_SIZE)}
                 </span>
                 <button
                   type="button"
                   onClick={() => { setPage((p) => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  disabled={page >= Math.ceil(totalProducts / 48)}
+                  disabled={page >= Math.ceil(totalProducts / PAGE_SIZE)}
                   className="px-4 py-1.5 text-xs font-medium rounded-md border border-[hsl(220_12%_80%)] bg-white text-[hsl(222_47%_12%)] disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[hsl(221_60%_97%)] transition-colors"
                 >
                   Next →
@@ -950,7 +869,12 @@ function App() {
       </div>
 
       {modalProduct && (
-        <RequestPriceModal product={modalProduct} onClose={() => setModalEan(null)} />
+        <RequestSupplierModal
+          ean={modalProduct.ean}
+          title={modalProduct.title}
+          sourcePage="webversion-catalog"
+          onClose={() => setModalEan(null)}
+        />
       )}
     </>
   );
