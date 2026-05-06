@@ -47,6 +47,30 @@ function competitionBadge(level: 0 | 1 | 2 | 3): { label: string; chiliColor: st
   }
 }
 
+function applyClientFilters(
+  items: PublicProduct[],
+  keyword: string,
+  inStockOnly: boolean,
+  hasPictureOnly: boolean,
+  selectedCompetitionLevels: Set<number>,
+): PublicProduct[] {
+  let filtered = inStockOnly ? items.filter((p) => p.stockStatus === 'in stock') : items;
+  if (hasPictureOnly) {
+    filtered = filtered.filter((p) => !!p.image);
+  }
+  if (selectedCompetitionLevels.size > 0) {
+    filtered = filtered.filter((p) => selectedCompetitionLevels.has(competitionLevel(p.competitorCount)));
+  }
+  if (keyword) {
+    filtered = filtered.filter((p) =>
+      p.ean.toLowerCase().includes(keyword)
+      || p.title.toLowerCase().includes(keyword)
+      || p.brand.toLowerCase().includes(keyword),
+    );
+  }
+  return filtered;
+}
+
 // ─── Product Card ─────────────────────────────────────────────────────────────
 
 function marginRangeLabel(grade: string, marketPrice: number | null, currency: string | null): string | null {
@@ -647,7 +671,8 @@ function App() {
       setError('');
       try {
         const normalizedKeyword = debouncedKeyword.trim();
-        const effectiveLimit = normalizedKeyword ? 200 : 48;
+        const normalizedKeywordLower = normalizedKeyword.toLowerCase();
+        const effectiveLimit = 48;
         const effectivePage = normalizedKeyword ? 1 : page;
         const data = await getProducts(
           normalizedKeyword,
@@ -658,9 +683,46 @@ function App() {
           effectivePage,
           selectedGrades.size > 0 ? selectedGrades : undefined,
         );
+        const backendTotal = data.total ?? data.count;
+        const totalPages = Math.max(1, Math.ceil(backendTotal / effectiveLimit));
+
+        const merged: PublicProduct[] = [...data.products];
+        const seenEans = new Set(merged.map((p) => p.ean));
+
+        let nextPage = effectivePage + 1;
+        while (
+          nextPage <= totalPages
+          && applyClientFilters(
+            merged,
+            normalizedKeywordLower,
+            inStockOnly,
+            hasPictureOnly,
+            selectedCompetitionLevels,
+          ).length < 48
+        ) {
+          const extra = await getProducts(
+            normalizedKeyword,
+            effectiveLimit,
+            selectedCategory || undefined,
+            selectedBrand || undefined,
+            market,
+            nextPage,
+            selectedGrades.size > 0 ? selectedGrades : undefined,
+          );
+
+          if (!extra.products.length) break;
+          for (const item of extra.products) {
+            if (!seenEans.has(item.ean)) {
+              seenEans.add(item.ean);
+              merged.push(item);
+            }
+          }
+          nextPage += 1;
+        }
+
         if (!active) return;
-        setProducts(data.products);
-        setTotalProducts(data.total ?? data.count);
+        setProducts(merged);
+        setTotalProducts(backendTotal);
       } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : 'Could not load products');
@@ -670,34 +732,49 @@ function App() {
     }
     load();
     return () => { active = false; };
-  }, [debouncedKeyword, selectedCategory, selectedBrand, market, page, selectedGrades]);
+  }, [
+    debouncedKeyword,
+    selectedCategory,
+    selectedBrand,
+    market,
+    page,
+    selectedGrades,
+    inStockOnly,
+    hasPictureOnly,
+    selectedCompetitionLevels,
+  ]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setPage(1);
-  }, [debouncedKeyword, selectedCategory, selectedBrand, market, selectedGrades]);
+  }, [
+    debouncedKeyword,
+    selectedCategory,
+    selectedBrand,
+    market,
+    selectedGrades,
+    inStockOnly,
+    hasPictureOnly,
+    selectedCompetitionLevels,
+  ]);
 
   const visibleProducts = useMemo(() => {
     const keyword = debouncedKeyword.trim().toLowerCase();
-    let filtered = inStockOnly ? products.filter((p) => p.stockStatus === 'in stock') : products;
-    if (hasPictureOnly) {
-      filtered = filtered.filter((p) => !!p.image);
-    }
-    if (selectedCompetitionLevels.size > 0) {
-      filtered = filtered.filter((p) => selectedCompetitionLevels.has(competitionLevel(p.competitorCount)));
-    }
-    if (keyword) {
-      filtered = filtered.filter((p) =>
-        p.ean.toLowerCase().includes(keyword)
-        || p.title.toLowerCase().includes(keyword)
-        || p.brand.toLowerCase().includes(keyword),
-      );
-    }
-    return [...filtered].sort((a, b) => {
+    const filtered = applyClientFilters(
+      products,
+      keyword,
+      inStockOnly,
+      hasPictureOnly,
+      selectedCompetitionLevels,
+    );
+
+    return [...filtered]
+      .sort((a, b) => {
       const aNa = a.marginGrade === 'N/A' ? 1 : 0;
       const bNa = b.marginGrade === 'N/A' ? 1 : 0;
       return aNa - bNa;
-    });
+      })
+      .slice(0, 48);
   }, [products, inStockOnly, hasPictureOnly, selectedCompetitionLevels, debouncedKeyword]);
 
   const modalProduct = useMemo(

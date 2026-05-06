@@ -29,6 +29,20 @@ const sqlConfig: sql.config = {
   requestTimeout: 30000,
 };
 
+function sqlEnvSummary(): {
+  server: string;
+  database: string;
+  userConfigured: boolean;
+  passwordConfigured: boolean;
+} {
+  return {
+    server: sqlConfig.server || '',
+    database: sqlConfig.database || '',
+    userConfigured: Boolean(sqlConfig.user),
+    passwordConfigured: Boolean(sqlConfig.password),
+  };
+}
+
 type PublicProduct = {
   ean: string;
   title: string;
@@ -183,6 +197,11 @@ async function getPool(): Promise<sql.ConnectionPool> {
 async function main(): Promise<void> {
   const app = express();
 
+  const envSummary = sqlEnvSummary();
+  if (!envSummary.userConfigured || !envSummary.passwordConfigured) {
+    console.warn('SQL configuration is incomplete', envSummary);
+  }
+
   app.use(cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
@@ -192,8 +211,21 @@ async function main(): Promise<void> {
   }));
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'webversion-api' });
+  app.get('/health', async (_req, res) => {
+    try {
+      const pool = await getPool();
+      await pool.request().query('SELECT 1 AS ok');
+      res.json({ ok: true, service: 'webversion-api', db: 'up' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown database error';
+      res.status(503).json({
+        ok: false,
+        service: 'webversion-api',
+        db: 'down',
+        sql: sqlEnvSummary(),
+        error: message,
+      });
+    }
   });
 
   app.get('/api/public/products', async (req, res) => {
