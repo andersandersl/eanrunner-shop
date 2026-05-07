@@ -50,6 +50,8 @@ export function getProducts(
   idToken?: string,
   allowedSuppliers?: string[],
   approvedEmail?: string,
+  inStock?: boolean,
+  hasImage?: boolean,
 ): Promise<ProductListResponse> {
   const params = new URLSearchParams();
   if (query) params.set('query', query);
@@ -59,6 +61,8 @@ export function getProducts(
   if (brand) params.set('brand', brand);
   params.set('market', market);
   if (grades && grades.size > 0) params.set('grades', [...grades].join(','));
+  if (inStock) params.set('inStock', 'true');
+  if (hasImage) params.set('hasImage', 'true');
   return readJson<ProductListResponse>(`/api/public/products?${params.toString()}`, idToken, allowedSuppliers, approvedEmail);
 }
 

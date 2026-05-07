@@ -171,6 +171,8 @@ const searchQuerySchema = z.object({
   brand: z.string().trim().max(100).optional(),
   market: z.enum(['dk', 'se', 'fi']).optional(),
   grades: z.string().trim().max(40).optional(), // comma-separated e.g. "A,B,C"
+  inStock: z.enum(['true', 'false']).optional(),
+  hasImage: z.enum(['true', 'false']).optional(),
 });
 
 function computeMarginGrade(cheapestSupplierPrice: number | null, marketPriceEur: number | null): PublicProduct['marginGrade'] {
@@ -577,6 +579,12 @@ async function main(): Promise<void> {
       if (rawBrand) {
         request.input('brand', sql.NVarChar, rawBrand);
         conditions.push('ep.brand = @brand');
+      }
+      if (parsed.data.inStock === 'true') {
+        conditions.push('EXISTS (SELECT 1 FROM consolidated.supplier_product cspex WHERE cspex.ean = ep.ean AND cspex.stock_quantity > 0)');
+      }
+      if (parsed.data.hasImage === 'true') {
+        conditions.push("ep.main_image IS NOT NULL AND ep.main_image <> ''");
       }
       const baseWhereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const whereClause = baseWhereClause

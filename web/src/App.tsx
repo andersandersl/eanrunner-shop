@@ -9,7 +9,6 @@ import LoginArea from './components/LoginArea';
 import { useAuth } from './auth-context';
 
 const PAGE_SIZE = 48;
-const MAX_TOP_UP_PAGES = 6;
 
 const GRADE_STYLES: Record<string, { bg: string; text: string }> = {
   A: { bg: 'bg-emerald-100', text: 'text-emerald-800' },
@@ -55,14 +54,9 @@ function competitionBadge(level: 0 | 1 | 2 | 3): { label: string; chiliColor: st
 function applyClientFilters(
   items: PublicProduct[],
   keyword: string,
-  inStockOnly: boolean,
-  hasPictureOnly: boolean,
   selectedCompetitionLevels: Set<number>,
 ): PublicProduct[] {
-  let filtered = inStockOnly ? items.filter((p) => p.stockStatus === 'in stock') : items;
-  if (hasPictureOnly) {
-    filtered = filtered.filter((p) => !!p.image);
-  }
+  let filtered = items;
   if (selectedCompetitionLevels.size > 0) {
     filtered = filtered.filter((p) => selectedCompetitionLevels.has(competitionLevel(p.competitorCount)));
   }
@@ -629,7 +623,6 @@ function App() {
       setError('');
       try {
         const normalizedKeyword = debouncedKeyword.trim();
-        const normalizedKeywordLower = normalizedKeyword.toLowerCase();
         const effectiveLimit = PAGE_SIZE;
         const effectivePage = normalizedKeyword ? 1 : page;
         const data = await getProducts(
@@ -643,54 +636,13 @@ function App() {
           idToken,
           approvedAccount?.allowedSuppliers,
           approvedAccount?.email,
+          inStockOnly || undefined,
+          hasPictureOnly || undefined,
         );
         const backendTotal = data.total ?? data.count;
-        const totalPages = Math.max(1, Math.ceil(backendTotal / effectiveLimit));
-
-        const merged: PublicProduct[] = [...data.products];
-        const seenEans = new Set(merged.map((p) => p.ean));
-
-        let nextPage = effectivePage + 1;
-        let extraPagesFetched = 0;
-        while (
-          nextPage <= totalPages
-          && extraPagesFetched < MAX_TOP_UP_PAGES
-          && applyClientFilters(
-            merged,
-            normalizedKeywordLower,
-            inStockOnly,
-            hasPictureOnly,
-            selectedCompetitionLevels,
-          ).length < PAGE_SIZE
-        ) {
-          const extra = await getProducts(
-            normalizedKeyword,
-            effectiveLimit,
-            selectedCategory || undefined,
-            selectedBrand || undefined,
-            market,
-            nextPage,
-            selectedGrades.size > 0 ? selectedGrades : undefined,
-            idToken,
-            approvedAccount?.allowedSuppliers,
-            approvedAccount?.email,
-          );
-
-          if (!extra.products.length) break;
-          const beforeLength = merged.length;
-          for (const item of extra.products) {
-            if (!seenEans.has(item.ean)) {
-              seenEans.add(item.ean);
-              merged.push(item);
-            }
-          }
-          if (merged.length === beforeLength) break;
-          nextPage += 1;
-          extraPagesFetched += 1;
-        }
 
         if (!active) return;
-        setProducts(merged);
+        setProducts(data.products);
         setTotalProducts(backendTotal);
       } catch (err) {
         if (!active) return;
@@ -737,8 +689,6 @@ function App() {
     const filtered = applyClientFilters(
       products,
       keyword,
-      inStockOnly,
-      hasPictureOnly,
       selectedCompetitionLevels,
     );
 
@@ -749,7 +699,7 @@ function App() {
       return aNa - bNa;
       })
       .slice(0, PAGE_SIZE);
-  }, [products, inStockOnly, hasPictureOnly, selectedCompetitionLevels, debouncedKeyword]);
+  }, [products, selectedCompetitionLevels, debouncedKeyword]);
 
   const modalProduct = useMemo(
     () => (modalEan ? products.find((p) => p.ean === modalEan) || null : null),
