@@ -1,6 +1,5 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "npm --prefix api install && npm --prefix api run build"
+builder = "DOCKERFILE"
 
 [deploy]
 healthcheckPath = "/health"
